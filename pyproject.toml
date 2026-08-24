@@ -1,0 +1,20 @@
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+pythonpath = ["runtime"]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["runtime/voice_service"]
+
+[[tool.mypy.overrides]]
+module = ["soundfile", "numpy", "yaml", "qwen_tts", "huggingface_hub", "torch"]
+ignore_missing_imports = true

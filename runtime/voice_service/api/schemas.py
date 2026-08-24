@@ -1,0 +1,116 @@
+from __future__ import annotations
+
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from voice_service.domain import NarrationJob, VoiceProfile
+
+
+class NarrationCreate(BaseModel):
+    text: str
+    language: str = "Portuguese"
+    voice_profile: str | None = None
+    generation_profile: str | None = None
+    seed: int = Field(default=0, ge=0, le=2**31 - 1)
+
+
+class NarrationOut(BaseModel):
+    id: str
+    status: str
+    created: bool | None = None
+    created_at: str
+    started_at: str | None
+    completed_at: str | None
+    text_length: int
+    language: str
+    voice_profile: str
+    generation_profile: str
+    resolved_seed: int
+    current_chunk: int
+    total_chunks: int
+    model_id: str
+    model_revision: str
+    result_duration_seconds: float | None
+    result_sample_rate: int | None
+    result_channels: int | None
+    result_subtype: str | None
+    result_byte_size: int | None
+    result_sha256: str | None
+    sample_peak_dbfs: float | None
+    clipping_sample_count: int | None
+    error_category: str | None
+    error_message: str | None
+    status_url: str
+    audio_url: str
+    metadata: dict[str, Any]
+
+    @classmethod
+    def from_job(cls, job: NarrationJob, *, created: bool | None = None) -> NarrationOut:
+        return cls(
+            id=job.id,
+            status=job.status.value,
+            created=created,
+            created_at=job.created_at,
+            started_at=job.started_at,
+            completed_at=job.completed_at,
+            text_length=len(job.text),
+            language=job.language,
+            voice_profile=job.voice_profile,
+            generation_profile=job.generation_profile,
+            resolved_seed=job.resolved_seed,
+            current_chunk=job.current_chunk,
+            total_chunks=job.total_chunks,
+            model_id=job.model_id,
+            model_revision=job.model_revision,
+            result_duration_seconds=job.result_duration_seconds,
+            result_sample_rate=job.result_sample_rate,
+            result_channels=job.result_channels,
+            result_subtype=job.result_subtype,
+            result_byte_size=job.result_byte_size,
+            result_sha256=job.result_sha256,
+            sample_peak_dbfs=job.sample_peak_dbfs,
+            clipping_sample_count=job.clipping_sample_count,
+            error_category=job.error_category,
+            error_message=job.error_message,
+            status_url=f"/v1/narrations/{job.id}",
+            audio_url=f"/v1/narrations/{job.id}/audio",
+            metadata=job.metadata,
+        )
+
+
+class VoiceOut(BaseModel):
+    name: str
+    version: str
+    clone_mode: str
+    audio_sha256: str
+    transcript_sha256: str
+    duration_seconds: float
+    sample_rate: int
+    channels: int
+    identity: str
+
+    @classmethod
+    def from_profile(cls, profile: VoiceProfile) -> VoiceOut:
+        return cls(
+            name=profile.name,
+            version=profile.version,
+            clone_mode=profile.clone_mode,
+            audio_sha256=profile.audio_sha256,
+            transcript_sha256=profile.transcript_sha256,
+            duration_seconds=profile.duration_seconds,
+            sample_rate=profile.sample_rate,
+            channels=profile.channels,
+            identity=profile.identity,
+        )
+
+
+class LegacyGenerateRequest(BaseModel):
+    text: str
+    language: str = "Portuguese"
+    seed: int = Field(default=0, ge=0, le=2**31 - 1)
+    temperature: float = 0.9
+    top_p: float = 1.0
+    top_k: int = 50
+    repetition_penalty: float = 1.05
+    max_new_tokens: int = 2048

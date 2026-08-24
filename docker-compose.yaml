@@ -1,0 +1,55 @@
+services:
+  qwen-tts:
+    build:
+      context: .
+      dockerfile: runtime/Dockerfile
+    container_name: qwen3-tts
+    ports:
+      - "127.0.0.1:8889:8889"
+    volumes:
+      - ./cache/huggingface:/models/hf
+      - ./data/references:/data/references:ro
+      - ./data/jobs:/data/jobs
+      - ./data/outputs:/data/outputs
+      - ./config:/app/config:ro
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      HF_HOME: /models/hf
+      HF_HUB_CACHE: /models/hf/hub
+      MODEL_ID: ${MODEL_ID:-Qwen/Qwen3-TTS-12Hz-1.7B-Base}
+      MODEL_REVISION: ${MODEL_REVISION:-fd4b254389122332181a7c3db7f27e918eec64e3}
+      DEVICE: ${DEVICE:-cuda:0}
+      DTYPE: ${DTYPE:-float16}
+      ATTENTION_IMPL: ${ATTENTION_IMPL:-sdpa}
+      VOICE_PROFILES_FILE: /app/config/voices.yaml
+      GENERATION_PROFILES_FILE: /app/config/generation_profiles.yaml
+      DEFAULT_VOICE_PROFILE: ${DEFAULT_VOICE_PROFILE:-bernardo_v1}
+      DEFAULT_GENERATION_PROFILE: ${DEFAULT_GENERATION_PROFILE:-narration_v1}
+      MAX_QUEUE_SIZE: ${MAX_QUEUE_SIZE:-32}
+      MAX_TEXT_CHARS: ${MAX_TEXT_CHARS:-50000}
+      TARGET_CHUNK_CHARS: ${TARGET_CHUNK_CHARS:-500}
+      MAX_CHUNK_CHARS: ${MAX_CHUNK_CHARS:-800}
+      OUTPUT_DIRECTORY: /data/outputs
+      JOB_DATABASE_PATH: /data/jobs/narrations.sqlite3
+      JOB_RETENTION_HOURS: ${JOB_RETENTION_HOURS:-168}
+      WARMUP_ENABLED: ${WARMUP_ENABLED:-false}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: "4gb"
+    tmpfs:
+      - /tmp:size=2g,mode=1777
+    restart: unless-stopped
+    stop_grace_period: 30m
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8889/health/ready"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 180s

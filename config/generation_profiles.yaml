@@ -1,0 +1,14 @@
+generation_profiles:
+  narration_v1:
+    version: "1"
+    parameters:
+      do_sample: true
+      temperature: 0.9
+      top_p: 1.0
+      top_k: 50
+      repetition_penalty: 1.05
+      subtalker_dosample: true
+      subtalker_temperature: 0.9
+      subtalker_top_p: 1.0
+      subtalker_top_k: 50
+      max_new_tokens: 2048

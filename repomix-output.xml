@@ -1,0 +1,361 @@
+This file is a merged representation of the entire codebase, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of the entire repository's contents.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+data/
+  references/
+    ref_original.wav
+    ref_qwen_24k_mono_pcm16.txt
+    ref_qwen_24k_mono_pcm16.wav
+    ref_qwen.txt
+    ref_qwen.wav
+    ref.txt
+    ref.wav
+runtime/
+  app.py
+  Dockerfile
+  requirements.txt
+.gitignore
+docker-compose.yaml
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="data/references/ref_qwen_24k_mono_pcm16.txt">
+Gravação iniciada para fazer um teste e treinamento de fonética, prosódia e conversação para inteligência artificial. O intuito é criar uma amostra de voz natural, concisa e funcional
+</file>
+
+<file path="data/references/ref_qwen.txt">
+Gravação iniciada para fazer um teste e treinamento de fonética, prosódia e conversação para inteligência artificial. O intuito é criar uma amostra de voz natural, concisa e funcional
+</file>
+
+<file path="data/references/ref.txt">
+Gravação iniciada para fazer um teste e treinamento de fonética, prosódia e conversação para inteligência artificial. O intuito é criar uma amostra de voz natural, concisa e funcional
+</file>
+
+<file path="runtime/app.py">
+import asyncio
+import io
+import os
+import random
+import secrets
+
+import numpy as np
+import soundfile as sf
+import torch
+
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
+
+from qwen_tts import Qwen3TTSModel
+
+
+MODEL_ID = os.getenv(
+    "MODEL_ID",
+    "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
+)
+
+REFERENCE_AUDIO = os.getenv(
+    "REFERENCE_AUDIO",
+    "/data/references/ref.wav",
+)
+
+REFERENCE_TEXT_FILE = os.getenv(
+    "REFERENCE_TEXT_FILE",
+    "/data/references/ref.txt",
+)
+
+DEVICE = os.getenv("DEVICE", "cuda:0")
+ATTENTION_IMPL = os.getenv("ATTENTION_IMPL", "sdpa")
+
+_generation_lock = asyncio.Lock()
+
+app = FastAPI(title="NeoVids Qwen3-TTS")
+
+
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed % (2**32))
+    torch.manual_seed(seed)
+
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+
+
+def resolve_seed(seed: int) -> int:
+    if seed == 0:
+        return secrets.randbelow(2**31 - 1) + 1
+
+    if seed < 0:
+        raise ValueError("seed must be >= 0")
+
+    return seed
+
+
+print(f"Loading {MODEL_ID}")
+print(f"Device: {DEVICE}")
+print(f"Attention: {ATTENTION_IMPL}")
+
+tts = Qwen3TTSModel.from_pretrained(
+    MODEL_ID,
+    device_map=DEVICE,
+    dtype=torch.float16,
+    attn_implementation=ATTENTION_IMPL,
+)
+
+with open(REFERENCE_TEXT_FILE, "r", encoding="utf-8") as f:
+    reference_text = f.read().strip()
+
+print(f"Reference audio: {REFERENCE_AUDIO}")
+
+voice_prompt = tts.create_voice_clone_prompt(
+    ref_audio=REFERENCE_AUDIO,
+    ref_text=reference_text,
+    x_vector_only_mode=False,
+)
+
+print("Voice prompt created successfully.")
+
+
+class GenerateRequest(BaseModel):
+    text: str
+    language: str = "Portuguese"
+
+    seed: int = 0
+
+    temperature: float = Field(default=0.9, ge=0.01, le=2.0)
+    top_p: float = Field(default=1.0, ge=0.01, le=1.0)
+    top_k: int = Field(default=50, ge=1, le=500)
+
+    repetition_penalty: float = Field(
+        default=1.05,
+        ge=0.5,
+        le=2.0,
+    )
+
+    max_new_tokens: int = Field(
+        default=2048,
+        ge=64,
+        le=8192,
+    )
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "model": MODEL_ID,
+        "device": DEVICE,
+        "attention": ATTENTION_IMPL,
+        "dtype": "float16",
+        "cuda": torch.cuda.is_available(),
+    }
+
+
+def generate_sync(req: GenerateRequest, seed: int):
+    set_seed(seed)
+
+    wavs, sr = tts.generate_voice_clone(
+        text=req.text,
+        language=req.language,
+        voice_clone_prompt=voice_prompt,
+
+        do_sample=True,
+        temperature=req.temperature,
+        top_p=req.top_p,
+        top_k=req.top_k,
+        repetition_penalty=req.repetition_penalty,
+
+        subtalker_dosample=True,
+        subtalker_temperature=req.temperature,
+        subtalker_top_p=req.top_p,
+        subtalker_top_k=req.top_k,
+
+        max_new_tokens=req.max_new_tokens,
+    )
+
+    buffer = io.BytesIO()
+
+    sf.write(
+        buffer,
+        wavs[0],
+        sr,
+        format="WAV",
+        subtype="PCM_16",
+    )
+
+    return buffer.getvalue()
+
+
+@app.post("/generate")
+async def generate(req: GenerateRequest):
+    if not req.text.strip():
+        raise HTTPException(400, "text must not be empty")
+
+    try:
+        seed = resolve_seed(req.seed)
+
+        # RNG do Torch/CUDA é global, então serializamos geração.
+        async with _generation_lock:
+            audio = await asyncio.to_thread(
+                generate_sync,
+                req,
+                seed,
+            )
+
+        return Response(
+            content=audio,
+            media_type="audio/wav",
+            headers={
+                "X-Qwen-Seed": str(seed),
+            },
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=str(exc),
+        ) from exc
+</file>
+
+<file path="runtime/Dockerfile">
+FROM pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/models/hf \
+    HF_HUB_CACHE=/models/hf/hub
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    sox \
+    libsox-dev \
+    curl \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+COPY requirements.txt .
+
+RUN pip install --upgrade pip && \
+    pip install -r requirements.txt
+
+COPY app.py .
+
+EXPOSE 8889
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8889"]
+</file>
+
+<file path="runtime/requirements.txt">
+qwen-tts==0.1.1
+fastapi
+uvicorn[standard]
+pydantic
+soundfile
+numpy
+huggingface_hub[cli]
+</file>
+
+<file path=".gitignore">
+cache
+output
+</file>
+
+<file path="docker-compose.yaml">
+services:
+  qwen-tts:
+    build:
+      context: ./runtime
+
+    container_name: qwen3-tts
+
+    ports:
+      - "8889:8889"
+
+    volumes:
+      - ./cache/huggingface:/models/hf
+      - ./data:/data
+      - ./outputs:/outputs
+
+    environment:
+      HF_HOME: /models/hf
+      HF_HUB_CACHE: /models/hf/hub
+
+      MODEL_ID: Qwen/Qwen3-TTS-12Hz-1.7B-Base
+
+      DEVICE: cuda:0
+      ATTENTION_IMPL: sdpa
+
+      REFERENCE_AUDIO: /data/references/ref.wav
+      REFERENCE_TEXT_FILE: /data/references/ref.txt
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    shm_size: "4gb"
+
+    restart: unless-stopped
+
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "curl",
+          "-f",
+          "http://localhost:8889/health"
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 120s
+</file>
+
+</files>

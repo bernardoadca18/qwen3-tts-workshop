@@ -1,0 +1,173 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import soundfile as sf
+import yaml
+from pydantic import BaseModel, Field
+
+from voice_service.domain import GenerationProfile, VoiceProfile
+
+
+class ProfileConfigurationError(ValueError):
+    pass
+
+
+class GenerationControls(BaseModel):
+    do_sample: bool = True
+    temperature: float = Field(default=0.9, gt=0, le=2)
+    top_p: float = Field(default=1.0, gt=0, le=1)
+    top_k: int = Field(default=50, ge=1, le=500)
+    repetition_penalty: float = Field(default=1.05, ge=0.5, le=2)
+    subtalker_dosample: bool = True
+    subtalker_temperature: float = Field(default=0.9, gt=0, le=2)
+    subtalker_top_p: float = Field(default=1.0, gt=0, le=1)
+    subtalker_top_k: int = Field(default=50, ge=1, le=500)
+    max_new_tokens: int = Field(default=2048, ge=64, le=8192)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _identity(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _read_yaml(path: Path) -> dict[str, Any]:
+    try:
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        raise ProfileConfigurationError(f"cannot read profile configuration: {path.name}") from exc
+    if not isinstance(value, dict):
+        raise ProfileConfigurationError(f"profile configuration must be a mapping: {path.name}")
+    return value
+
+
+class VoiceProfileRegistry:
+    def __init__(self, profiles: dict[str, VoiceProfile]):
+        self._profiles = profiles
+
+    @classmethod
+    def load(cls, path: Path, *, model_id: str, model_revision: str) -> VoiceProfileRegistry:
+        raw = _read_yaml(path).get("voice_profiles")
+        if not isinstance(raw, dict) or not raw:
+            raise ProfileConfigurationError("voice_profiles must be a non-empty mapping")
+        profiles: dict[str, VoiceProfile] = {}
+        for name, config in raw.items():
+            if not isinstance(name, str) or not isinstance(config, dict):
+                raise ProfileConfigurationError("invalid voice profile entry")
+            profiles[name] = cls._load_one(name, config, model_id, model_revision)
+        return cls(profiles)
+
+    @staticmethod
+    def _load_one(
+        name: str,
+        config: dict[str, Any],
+        model_id: str,
+        model_revision: str,
+    ) -> VoiceProfile:
+        version = str(config.get("version", "")).strip()
+        audio_path = Path(str(config.get("reference_audio", "")))
+        text_path = Path(str(config.get("reference_text", "")))
+        clone_mode = str(config.get("clone_mode", "icl"))
+        if not version or clone_mode != "icl":
+            raise ProfileConfigurationError(f"invalid voice profile metadata: {name}")
+        if not audio_path.is_file() or not text_path.is_file():
+            raise ProfileConfigurationError(f"voice profile files are missing: {name}")
+        try:
+            transcript = text_path.read_text(encoding="utf-8").strip()
+            info = sf.info(str(audio_path))
+            samples, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
+        except (OSError, RuntimeError, UnicodeError) as exc:
+            raise ProfileConfigurationError(f"voice profile is unreadable: {name}") from exc
+        if not transcript:
+            raise ProfileConfigurationError(f"voice profile transcript is empty: {name}")
+        if samples.size == 0 or sample_rate <= 0 or info.frames <= 0:
+            raise ProfileConfigurationError(f"voice profile audio is empty: {name}")
+        if not np.all(np.isfinite(samples)):
+            raise ProfileConfigurationError(f"voice profile audio has non-finite samples: {name}")
+        audio_hash = _sha256_file(audio_path)
+        transcript_hash = _sha256_text(transcript)
+        identity = _identity(
+            {
+                "name": name,
+                "version": version,
+                "audio_sha256": audio_hash,
+                "transcript_sha256": transcript_hash,
+                "clone_mode": clone_mode,
+                "model_id": model_id,
+                "model_revision": model_revision,
+            }
+        )
+        return VoiceProfile(
+            name=name,
+            version=version,
+            reference_audio=audio_path,
+            transcript=transcript,
+            clone_mode=clone_mode,
+            audio_sha256=audio_hash,
+            transcript_sha256=transcript_hash,
+            duration_seconds=float(info.duration),
+            sample_rate=int(info.samplerate),
+            channels=int(info.channels),
+            identity=identity,
+        )
+
+    def get(self, name: str) -> VoiceProfile:
+        try:
+            return self._profiles[name]
+        except KeyError as exc:
+            raise ProfileConfigurationError("unknown voice profile") from exc
+
+    def all(self) -> list[VoiceProfile]:
+        return [self._profiles[name] for name in sorted(self._profiles)]
+
+
+class GenerationProfileRegistry:
+    def __init__(self, profiles: dict[str, GenerationProfile]):
+        self._profiles = profiles
+
+    @classmethod
+    def load(cls, path: Path) -> GenerationProfileRegistry:
+        raw = _read_yaml(path).get("generation_profiles")
+        if not isinstance(raw, dict) or not raw:
+            raise ProfileConfigurationError("generation_profiles must be a non-empty mapping")
+        profiles: dict[str, GenerationProfile] = {}
+        for name, config in raw.items():
+            if not isinstance(name, str) or not isinstance(config, dict):
+                raise ProfileConfigurationError("invalid generation profile entry")
+            version = str(config.get("version", "")).strip()
+            if not version:
+                raise ProfileConfigurationError(f"generation profile version is missing: {name}")
+            controls = GenerationControls.model_validate(config.get("parameters", {}))
+            parameters = controls.model_dump()
+            profiles[name] = GenerationProfile(
+                name=name,
+                version=version,
+                parameters=parameters,
+                identity=_identity({"name": name, "version": version, "parameters": parameters}),
+            )
+        return cls(profiles)
+
+    def get(self, name: str) -> GenerationProfile:
+        try:
+            return self._profiles[name]
+        except KeyError as exc:
+            raise ProfileConfigurationError("unknown generation profile") from exc
+
+    def all(self) -> list[GenerationProfile]:
+        return [self._profiles[name] for name in sorted(self._profiles)]

@@ -1,0 +1,216 @@
+# NeoVids Qwen3-TTS Voice Service
+
+Production-oriented, single-GPU voice-cloning service for NeoVids. Qwen3-TTS is
+an internal provider implementation; callers use versioned voice and generation
+profiles plus durable narration jobs. Kokoro, Seed-VC, pronunciation rewriting,
+final video mastering and Orchestrator integration are intentionally absent.
+
+## Architecture
+
+The FastAPI lifespan validates typed settings, opens SQLite, validates configured
+voice references, resolves one pinned Hugging Face snapshot, loads one Qwen model,
+builds each ICL voice prompt once, optionally warms up, recovers durable jobs and
+starts one GPU worker. Importing voice_service.main does not import qwen-tts or
+torch and does not initialize CUDA.
+
+Requests create durable queued jobs and return HTTP 202. A bounded in-process
+queue wakes the single worker; SQLite remains the source of truth. The worker
+chunks text deterministically, derives stable per-chunk seeds, synthesizes one
+utterance at a time, joins utterances with explicit silence, validates a temporary
+PCM16 WAV, atomically renames it and only then marks the job completed.
+
+The deployment scope is deliberately one process, one NVIDIA GPU and one worker.
+There is no broker, distributed lease or multi-GPU scheduler.
+
+## Configure
+
+Copy .env.example to .env and adjust only operational settings. Important values
+include model/revision, device/dtype/attention, default profiles, queue and text
+limits, SQLite/output locations, retention, warmup and pause durations.
+
+MODEL_REVISION defaults to the exact currently validated snapshot
+fd4b254389122332181a7c3db7f27e918eec64e3. qwen-tts 0.1.1 forwards kwargs to
+the model but not the processor, so the provider first resolves that revision
+with huggingface_hub.snapshot_download and loads the resulting local path. This
+pins model and processor files together.
+
+CPU with float16, unknown devices/dtypes/attention backends and inconsistent
+chunk limits fail configuration validation. FlashAttention is selectable only
+when installed and validated by the operator; sdpa is the conservative default.
+
+## Voice profiles
+
+config/voices.yaml maps trusted names to reference audio/transcript files. The
+initial bernardo_v1 profile uses ICL cloning (x_vector_only_mode=False). At
+startup the service checks file presence, non-empty transcript, readable and
+finite non-empty audio, then records profile/version, hashes, duration, format
+and model/revision-bound identity.
+
+The Qwen prompt is cached by this identity and is not recomputed per narration.
+A restart is the initial, explicit cache invalidation mechanism. GET /v1/voices
+returns safe metadata and never host paths.
+
+## Generation profiles
+
+config/generation_profiles.yaml contains internal Qwen controls. The stable API
+selects narration_v1; it does not expose Qwen sampling vocabulary. Changing a
+profile version or controls changes its identity and job provenance.
+
+Pronunciation preprocessing belongs upstream in the future Orchestrator: the
+service accepts already-preprocessed synthesis text and preserves the submitted
+canonical text exactly in job storage.
+
+## Run with Docker
+
+~~~bash
+docker compose config
+docker compose build
+docker compose up -d
+curl http://localhost:8889/health/live
+curl http://localhost:8889/health/ready
+~~~
+
+`/health/live` responds as soon as the event loop is serving, including while
+the model initializes. `/health/ready` returns HTTP 503 with a safe
+`initializing`/failure reason until provider, profiles and worker are usable.
+
+Compose retains the Hugging Face cache, SQLite database, final outputs and
+references across rebuilds. References/config are read-only mounts; jobs and
+outputs are separate persistent directories. The service binds to localhost,
+keeps NVIDIA reservation and uses readiness for its healthcheck.
+
+## Async narration API
+
+Create a job:
+
+~~~bash
+curl -i -X POST http://localhost:8889/v1/narrations \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: narration-scene-42' \
+  -d '{
+    "text": "Geralt aprende o sinal Aard.",
+    "language": "Portuguese",
+    "voice_profile": "bernardo_v1",
+    "generation_profile": "narration_v1",
+    "seed": 0
+  }'
+~~~
+
+seed=0 securely resolves once. The persisted response includes the resolved seed,
+job state and status/audio URLs. Poll and download:
+
+~~~bash
+curl http://localhost:8889/v1/narrations/JOB_ID
+curl -o narration.wav http://localhost:8889/v1/narrations/JOB_ID/audio
+~~~
+
+States are exactly queued, running, completed, failed. Status exposes safe
+progress, model/profile provenance, result format/checksum/metrics, and a bounded
+public error category/message. It never returns source text, stack traces or host
+paths. Audio is available only after completion.
+
+The deprecated synchronous POST /generate remains for current laboratory calls
+and uses the same durable job/worker pipeline. Its historical default raw values
+are accepted; non-default raw Qwen overrides are rejected. New consumers must
+use /v1/narrations.
+
+## Idempotency and determinism
+
+An Idempotency-Key identifies the canonical input fingerprint: exact text,
+language, profile identities, requested seed and model identity/revision. Replay
+returns the original job and original resolved seed. Reuse with different inputs
+returns HTTP 409. Requests without a key create independent jobs.
+
+Python, NumPy, torch CPU and all CUDA RNGs are seeded for each provider call.
+Chunk seed i is derived from SHA-256 of
+qwen3-tts-chunk-v1:<base-seed>:<i>. Retry/recovery therefore reconstructs the
+same seed sequence. CUDA kernels may still prevent bit-for-bit equivalence; the
+service promises traceable reproducibility metadata, not impossible guarantees.
+There are no hidden synthesis retries.
+
+## Long text and audio assembly
+
+The character-bounded heuristic preserves every original character and order. It
+prefers paragraph boundaries, then sentence boundaries, then whitespace fallback,
+with hard cuts only as a last resort. Decimal points such as 3.14 are not treated
+as sentence endings. Character limits are safeguards, not token-count claims.
+
+Chunks are independent utterances and are never crossfaded. Assembly inserts a
+configured deterministic silence based on paragraph, sentence, fallback or hard
+split boundary. Qwen's native sample rate/channels must remain stable across
+chunks. No legacy 22050 Hz resampling exists.
+
+The assembled float waveform is encoded once as native-rate PCM16. Validation
+checks shape, non-empty/finite samples, sample rate, PCM range, duration, reopened
+WAV format and obvious clipping. SHA-256, size, duration, channels, subtype and
+sample peak are persisted. Atomic rename occurs before completed state. Partial
+WAVs are never served.
+
+This is validation, not final mastering. The service does not apply LUFS gain,
+limiting, compression, EQ, denoising or enhancement. Final 48 kHz conversion and
+video-level integrated loudness mastering are intentionally deferred to the
+Orchestrator migration stage, after complete narration assembly.
+
+## Recovery and retention
+
+At startup, queued jobs are re-enqueued. A running job with a valid atomically
+published final WAV is reconciled to completed. Otherwise its invalid/missing
+output is removed, it returns to queued and reruns with the same persisted model,
+profiles, base seed and chunk-seed algorithm. Terminal jobs older than
+JOB_RETENTION_HOURS and their outputs are removed at startup.
+
+The queue is memory-bounded and rejects overload with HTTP 503. SQLite persists
+all accepted work; the queue is not the durable authority. Graceful shutdown
+drains already accepted jobs before stopping the worker.
+
+## Tests
+
+Normal tests use FakeTTSProvider; they never import Qwen weights, initialize
+CUDA, contact Hugging Face or require internet.
+
+~~~bash
+python -m venv .venv
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/pytest
+.venv/bin/ruff check runtime tests scripts
+.venv/bin/mypy
+python -m compileall -q runtime tests scripts
+~~~
+
+## Benchmarks and GPU validation
+
+With the service running:
+
+~~~bash
+PYTHONPATH=runtime python scripts/benchmark_generation.py
+PYTHONPATH=runtime python scripts/benchmark_references.py \
+  --voices bernardo_v1 another_profile \
+  --text 'Texto fixo para comparar referencias.'
+PYTHONPATH=runtime python scripts/soak_test.py --count 50
+~~~
+
+Generation/reference manifests record input identity, profiles, model/revision,
+seed, latency, duration, RTF, sample rate, output/checksum and basic metrics. The
+soak run records sequential success, latency/RTF and process memory. Optional
+Whisper WER/CER is not a runtime dependency and is intentionally deferred.
+
+The direct real-model smoke is opt-in and never part of pytest:
+
+~~~bash
+RUN_REAL_QWEN_SMOKE=1 PYTHONPATH=runtime python scripts/smoke_real_qwen.py
+~~~
+
+It requires the real pinned model, CUDA and configured references, writes a small
+Portuguese WAV, validates it and reports latency, duration, RTF, sample rate,
+seed, model/revision, peak and checksum.
+
+## Security and limitations
+
+This is a trusted-network service. Profile names come only from configured
+registries; text and queue sizes are bounded; output IDs cannot traverse paths;
+public errors hide internals. Before public exposure it still requires TLS,
+authentication and infrastructure rate limiting.
+
+Known limitations are single-instance/single-GPU operation, no distributed lock,
+no cancellation API, startup-only profile reload, no perceptual quality metric,
+no final mastering and no Orchestrator migration yet.

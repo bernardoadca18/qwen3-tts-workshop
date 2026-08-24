@@ -1,0 +1,7 @@
+-r runtime/requirements-core.txt
+pytest==8.4.1
+pytest-asyncio==1.1.0
+httpx==0.28.1
+ruff==0.12.7
+mypy==1.17.1
+types-PyYAML==6.0.12.20250516
