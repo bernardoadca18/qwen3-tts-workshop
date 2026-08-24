@@ -55,6 +55,8 @@ returns safe metadata and never host paths.
 config/generation_profiles.yaml contains internal Qwen controls. The stable API
 selects narration_v1; it does not expose Qwen sampling vocabulary. Changing a
 profile version or controls changes its identity and job provenance.
+GET /v1/generation-profiles exposes only name, version and canonical identity
+so callers can invalidate derived audio without learning provider controls.
 
 Pronunciation preprocessing belongs upstream in the future Orchestrator: the
 service accepts already-preprocessed synthesis text and preserves the submitted
@@ -211,6 +213,10 @@ registries; text and queue sizes are bounded; output IDs cannot traverse paths;
 public errors hide internals. Before public exposure it still requires TLS,
 authentication and infrastructure rate limiting.
 
+Compose publishes port 8889 on the host so the separately deployed Orchestrator
+can reach it through `host.docker.internal`. Restrict that port with the host
+firewall; the service does not provide public-network authentication.
+
 Known limitations are single-instance/single-GPU operation, no distributed lock,
 no cancellation API, startup-only profile reload, no perceptual quality metric,
-no final mastering and no Orchestrator migration yet.
+and no final mastering (the Orchestrator owns whole-narration mastering).

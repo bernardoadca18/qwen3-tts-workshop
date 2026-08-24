@@ -30,6 +30,14 @@ def test_live_is_available_before_readiness_and_ready_after_lifespan(app_factory
         voices = running.get("/v1/voices").json()
         assert voices[0]["name"] == "test_voice"
         assert "reference_audio" not in voices[0]
+        generations = running.get("/v1/generation-profiles").json()
+        assert generations == [
+            {
+                "name": "test_generation",
+                "version": "1",
+                "identity": app.state.runtime.generations.get("test_generation").identity,
+            }
+        ]
     assert provider.initialized is False
     assert len(provider.prepared) == 1
 

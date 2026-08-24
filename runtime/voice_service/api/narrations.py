@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
 from voice_service.api.schemas import (
+    GenerationProfileOut,
     LegacyGenerateRequest,
     NarrationCreate,
     NarrationOut,
@@ -92,6 +93,18 @@ async def list_voices(request: Request) -> list[VoiceOut]:
     _service(request)
     assert runtime.voices is not None
     return [VoiceOut.from_profile(profile) for profile in runtime.voices.all()]
+
+
+@router.get(
+    "/v1/generation-profiles",
+    response_model=list[GenerationProfileOut],
+    tags=["generation-profiles"],
+)
+async def list_generation_profiles(request: Request) -> list[GenerationProfileOut]:
+    runtime = request.app.state.runtime
+    _service(request)
+    assert runtime.generations is not None
+    return [GenerationProfileOut.from_profile(profile) for profile in runtime.generations.all()]
 
 
 @router.post("/generate", deprecated=True, tags=["legacy"])

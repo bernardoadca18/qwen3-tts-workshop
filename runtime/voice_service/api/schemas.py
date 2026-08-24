@@ -4,7 +4,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from voice_service.domain import NarrationJob, VoiceProfile
+from voice_service.domain import GenerationProfile, NarrationJob, VoiceProfile
 
 
 class NarrationCreate(BaseModel):
@@ -103,6 +103,16 @@ class VoiceOut(BaseModel):
             channels=profile.channels,
             identity=profile.identity,
         )
+
+
+class GenerationProfileOut(BaseModel):
+    name: str
+    version: str
+    identity: str
+
+    @classmethod
+    def from_profile(cls, profile: GenerationProfile) -> GenerationProfileOut:
+        return cls(name=profile.name, version=profile.version, identity=profile.identity)
 
 
 class LegacyGenerateRequest(BaseModel):

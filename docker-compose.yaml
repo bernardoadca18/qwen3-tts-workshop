@@ -5,7 +5,9 @@ services:
       dockerfile: runtime/Dockerfile
     container_name: qwen3-tts
     ports:
-      - "127.0.0.1:8889:8889"
+      # Required for separately deployed Orchestrator containers to reach
+      # host.docker.internal. Keep this service on a trusted/private host.
+      - "8889:8889"
     volumes:
       - ./cache/huggingface:/models/hf
       - ./data/references:/data/references:ro
