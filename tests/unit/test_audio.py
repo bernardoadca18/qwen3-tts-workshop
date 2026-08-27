@@ -8,7 +8,9 @@ from voice_service.services.audio import (
     AtomicWavPublisher,
     AudioAssembler,
     AudioValidationError,
+    ChunkQualityGuardError,
     normalize_audio_chunk,
+    validate_audio_chunk_quality,
     validate_wav,
 )
 
@@ -40,6 +42,33 @@ def test_invalid_provider_audio_is_rejected() -> None:
         normalize_audio_chunk(AudioChunk(np.zeros(10), 0))
     with pytest.raises(AudioValidationError, match="PCM range"):
         normalize_audio_chunk(AudioChunk(np.array([1.2]), 24000))
+
+
+def test_chunk_quality_guard_accepts_plausible_duration() -> None:
+    phase = np.arange(24000 * 4, dtype=np.float32)
+    metrics = validate_audio_chunk_quality(
+        AudioChunk(0.1 * np.sin(2 * np.pi * 220 * phase / 24000), 24000),
+        text="Uma frase informativa com duracao perfeitamente plausivel.",
+        max_duration_seconds=90,
+        max_seconds_per_char=0.35,
+        duration_grace_seconds=10,
+        min_peak_amplitude=1e-6,
+    )
+    assert metrics.audio_duration_seconds == pytest.approx(4)
+
+
+def test_chunk_quality_guard_rejects_obvious_runaway() -> None:
+    phase = np.arange(24000 * 160, dtype=np.float32)
+    with pytest.raises(ChunkQualityGuardError, match="absolute_duration_limit") as error:
+        validate_audio_chunk_quality(
+            AudioChunk(0.1 * np.sin(2 * np.pi * 220 * phase / 24000), 24000),
+            text="Paragrafo normal com algumas centenas de caracteres.",
+            max_duration_seconds=90,
+            max_seconds_per_char=0.35,
+            duration_grace_seconds=10,
+            min_peak_amplitude=1e-6,
+        )
+    assert error.value.metrics.audio_duration_seconds == pytest.approx(160)
 
 
 def test_atomic_publication_reopens_validates_and_hashes(tmp_path: Path) -> None:

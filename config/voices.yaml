@@ -1,6 +1,9 @@
 voice_profiles:
   bernardo_v1:
-    version: "1"
-    reference_audio: /data/references/ref_qwen_24k_mono_pcm16.wav
+    # Operator-provided current master. The previous derived file was archived
+    # outside the service bind mount, so keeping that stale path would make a
+    # clean rebuild fail profile validation.
+    version: "2"
+    reference_audio: /data/references/ref.wav
     reference_text: /data/references/ref.txt
     clone_mode: icl

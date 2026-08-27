@@ -17,6 +17,8 @@ from voice_service.services.audio import (
     AtomicWavPublisher,
     AudioAssembler,
     AudioValidationError,
+    ChunkQualityGuardError,
+    validate_audio_chunk_quality,
 )
 from voice_service.services.profiles import (
     GenerationProfileRegistry,
@@ -149,6 +151,7 @@ class NarrationService:
             language=language,
             voice_identity=voice.identity,
             generation_identity=generation.identity,
+            chunking_identity=self.chunker.identity,
             requested_seed=requested_seed,
         )
         async with self._creation_lock:
@@ -179,6 +182,7 @@ class NarrationService:
                 model_revision=self.settings.model_revision,
                 voice_identity=voice.identity,
                 generation_identity=generation.identity,
+                chunking_identity=self.chunker.identity,
                 request_fingerprint=fingerprint,
                 idempotency_key=idempotency_key,
             )
@@ -227,6 +231,7 @@ class NarrationService:
             if (
                 voice.identity != job.voice_identity
                 or generation.identity != job.generation_identity
+                or job.chunking_identity != self.chunker.identity
             ):
                 raise ProfileConfigurationError(
                     "persisted profile identity no longer matches configuration"
@@ -234,7 +239,7 @@ class NarrationService:
             chunks = self.chunker.chunk(job.text, base_seed=job.resolved_seed)
             self.repository.mark_running(job.id, started_at=utc_now(), total_chunks=len(chunks))
             audio_chunks = []
-            chunk_timings = []
+            chunk_diagnostics: list[dict[str, object]] = []
             for index, chunk in enumerate(chunks, start=1):
                 chunk_started = time.monotonic()
                 audio = await self.provider.generate(
@@ -244,8 +249,67 @@ class NarrationService:
                     generation_profile=generation,
                     seed=chunk.seed,
                 )
+                synthesis_seconds = time.monotonic() - chunk_started
+                try:
+                    quality = validate_audio_chunk_quality(
+                        audio,
+                        text=chunk.text,
+                        max_duration_seconds=self.settings.chunk_max_duration_seconds,
+                        max_seconds_per_char=self.settings.chunk_max_seconds_per_char,
+                        duration_grace_seconds=self.settings.chunk_duration_grace_seconds,
+                        min_peak_amplitude=self.settings.chunk_min_peak_amplitude,
+                    )
+                except ChunkQualityGuardError as exc:
+                    rejected = {
+                        "index": chunk.index,
+                        "start_char": chunk.start_char,
+                        "end_char": chunk.end_char,
+                        "boundary": chunk.boundary,
+                        "seed": chunk.seed,
+                        "text_length_chars": len(chunk.text),
+                        "audio_duration_seconds": exc.metrics.audio_duration_seconds,
+                        "synthesis_seconds": synthesis_seconds,
+                        "real_time_factor": (
+                            synthesis_seconds / exc.metrics.audio_duration_seconds
+                            if exc.metrics.audio_duration_seconds > 0
+                            else None
+                        ),
+                        "quality_guard_status": "rejected",
+                        "quality_guard_reason": exc.reason,
+                        "maximum_allowed_duration_seconds": (
+                            exc.metrics.maximum_allowed_duration_seconds
+                        ),
+                    }
+                    logger.warning(
+                        "chunk rejected by quality guard job_id=%s chunk_index=%s "
+                        "text_length_chars=%s audio_duration_seconds=%.3f seed=%s reason=%s",
+                        job.id,
+                        chunk.index,
+                        len(chunk.text),
+                        exc.metrics.audio_duration_seconds,
+                        chunk.seed,
+                        exc.reason,
+                    )
+                    exc.diagnostics = rejected
+                    raise
                 audio_chunks.append(audio)
-                chunk_timings.append(time.monotonic() - chunk_started)
+                chunk_diagnostics.append(
+                    {
+                        "index": chunk.index,
+                        "start_char": chunk.start_char,
+                        "end_char": chunk.end_char,
+                        "boundary": chunk.boundary,
+                        "seed": chunk.seed,
+                        "text_length_chars": quality.text_length_chars,
+                        "audio_duration_seconds": quality.audio_duration_seconds,
+                        "synthesis_seconds": synthesis_seconds,
+                        "real_time_factor": synthesis_seconds / quality.audio_duration_seconds,
+                        "quality_guard_status": "passed",
+                        "maximum_allowed_duration_seconds": (
+                            quality.maximum_allowed_duration_seconds
+                        ),
+                    }
+                )
                 self.repository.update_progress(job.id, current_chunk=index)
                 logger.info(
                     "chunk synthesized job_id=%s voice_profile=%s "
@@ -253,7 +317,7 @@ class NarrationService:
                     job.id,
                     job.voice_profile,
                     job.generation_profile,
-                    job.resolved_seed,
+                    chunk.seed,
                     index,
                     len(chunks),
                     len(chunk.text),
@@ -267,18 +331,14 @@ class NarrationService:
                 "model_revision": job.model_revision,
                 "voice_identity": job.voice_identity,
                 "generation_identity": job.generation_identity,
+                "chunking_strategy_version": self.chunker.strategy_version,
+                "chunking_identity": self.chunker.identity,
+                "chunking": {
+                    "target_chars": self.chunker.target_chars,
+                    "max_chars": self.chunker.max_chars,
+                },
                 "chunk_seed_strategy": "sha256:qwen3-tts-chunk-v1",
-                "chunks": [
-                    {
-                        "index": chunk.index,
-                        "start_char": chunk.start_char,
-                        "end_char": chunk.end_char,
-                        "boundary": chunk.boundary,
-                        "seed": chunk.seed,
-                        "synthesis_seconds": chunk_timings[chunk.index],
-                    }
-                    for chunk in chunks
-                ],
+                "chunks": chunk_diagnostics,
                 "synthesis_seconds": elapsed,
                 "real_time_factor": elapsed / metrics.duration_seconds,
             }
@@ -304,6 +364,25 @@ class NarrationService:
                 elapsed / metrics.duration_seconds,
                 metrics.sample_rate,
             )
+        except ChunkQualityGuardError as exc:
+            self.publisher.delete(job.id)
+            self._fail(
+                job,
+                "chunk_quality_guard",
+                "generated speech chunk failed quality validation",
+                metadata={
+                    "provider": self.provider.metadata().provider,
+                    "model_id": job.model_id,
+                    "model_revision": job.model_revision,
+                    "voice_identity": job.voice_identity,
+                    "generation_identity": job.generation_identity,
+                    "chunking_strategy_version": self.chunker.strategy_version,
+                    "chunking_identity": self.chunker.identity,
+                    "quality_guard_status": "rejected",
+                    "rejected_chunk": exc.diagnostics,
+                    "chunks": [*chunk_diagnostics, exc.diagnostics],
+                },
+            )
         except ProviderOutOfMemoryError:
             self._fail(job, "cuda_oom", "GPU capacity was exhausted")
         except ProviderError:
@@ -317,7 +396,14 @@ class NarrationService:
         except Exception:
             self._fail(job, "synthesis_failure", "narration generation failed")
 
-    def _fail(self, job: NarrationJob, category: str, public_message: str) -> None:
+    def _fail(
+        self,
+        job: NarrationJob,
+        category: str,
+        public_message: str,
+        *,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
         logger.exception(
             "narration failed job_id=%s voice_profile=%s generation_profile=%s seed=%s category=%s",
             job.id,
@@ -331,6 +417,7 @@ class NarrationService:
             completed_at=utc_now(),
             category=category,
             message=public_message,
+            metadata=metadata,
         )
 
     def _fingerprint(
@@ -340,6 +427,7 @@ class NarrationService:
         language: str,
         voice_identity: str,
         generation_identity: str,
+        chunking_identity: str,
         requested_seed: int,
     ) -> str:
         payload = {
@@ -347,6 +435,7 @@ class NarrationService:
             "language": language,
             "voice_identity": voice_identity,
             "generation_identity": generation_identity,
+            "chunking_identity": chunking_identity,
             "requested_seed": requested_seed,
             "model_id": self.settings.model_id,
             "model_revision": self.settings.model_revision,

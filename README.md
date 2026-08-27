@@ -41,7 +41,9 @@ when installed and validated by the operator; sdpa is the conservative default.
 ## Voice profiles
 
 config/voices.yaml maps trusted names to reference audio/transcript files. The
-initial bernardo_v1 profile uses ICL cloning (x_vector_only_mode=False). At
+`bernardo_v1` profile uses ICL cloning (x_vector_only_mode=False) and points to
+the operator's current `/data/references/ref.wav` master. It is versioned as
+`2`; changing the bytes or transcript changes its identity. At
 startup the service checks file presence, non-empty transcript, readable and
 finite non-empty audio, then records profile/version, hashes, duration, format
 and model/revision-bound identity.
@@ -119,7 +121,8 @@ use /v1/narrations.
 ## Idempotency and determinism
 
 An Idempotency-Key identifies the canonical input fingerprint: exact text,
-language, profile identities, requested seed and model identity/revision. Replay
+language, profile identities, requested seed, model identity/revision and the
+versioned effective chunking identity. Replay
 returns the original job and original resolved seed. Reuse with different inputs
 returns HTTP 409. Requests without a key create independent jobs.
 
@@ -132,7 +135,11 @@ There are no hidden synthesis retries.
 
 ## Long text and audio assembly
 
-The character-bounded heuristic preserves every original character and order. It
+The character-bounded heuristic preserves every original character and order. Production defaults
+are now target 250 / maximum 400 characters (previously 500 / 800), reducing the amount of
+autoregressive context in one inference call while retaining sentence-aware grouping. The
+`qwen3-tts-chunking-v2` identity includes both effective limits, so changing either cannot reuse a
+job created under different waveform semantics. It
 prefers paragraph boundaries, then sentence boundaries, then whitespace fallback,
 with hard cuts only as a last resort. Decimal points such as 3.14 are not treated
 as sentence endings. Character limits are safeguards, not token-count claims.
@@ -141,6 +148,14 @@ Chunks are independent utterances and are never crossfaded. Assembly inserts a
 configured deterministic silence based on paragraph, sentence, fallback or hard
 split boundary. Qwen's native sample rate/channels must remain stable across
 chunks. No legacy 22050 Hz resampling exists.
+
+Every provider result is validated before assembly. The explainable v1 guard requires finite,
+non-silent in-range audio at a valid sample rate and rejects a chunk above either the absolute
+90-second ceiling or the conservative `10 + 0.35 * text_length_chars` ceiling. These thresholds
+are deliberately loose enough for slow Portuguese narration; they target obvious runaways, not
+stylistic speaking-rate differences. Rejection fails the job as `chunk_quality_guard`, publishes
+no WAV and records safe chunk index/length/duration/seed/reason diagnostics. Qwen never retries a
+rejected chunk internally; the Orchestrator owns explicit retry policy.
 
 The assembled float waveform is encoded once as native-rate PCM16. Validation
 checks shape, non-empty/finite samples, sample rate, PCM range, duration, reopened
@@ -152,6 +167,13 @@ This is validation, not final mastering. The service does not apply LUFS gain,
 limiting, compression, EQ, denoising or enhancement. Final 48 kHz conversion and
 video-level integrated loudness mastering are intentionally deferred to the
 Orchestrator migration stage, after complete narration assembly.
+
+The pinned qwen-tts 0.1.1 implementation forwards `max_new_tokens` to the talker generation loop,
+where each generated step contributes one codec frame until the codec EOS token or the configured
+ceiling. The pinned model declares the 12 Hz tokenizer and 24 kHz output. Thus a generation near
+2048 steps is consistent with roughly the observed multi-minute ceiling, but the production audio
+does not prove why EOS was missed. `narration_v1` and its 2048-token baseline remain unchanged for
+reproducibility; the duration guard is the mandatory safety fuse at the waveform boundary.
 
 ## Recovery and retention
 
@@ -185,14 +207,20 @@ With the service running:
 
 ~~~bash
 PYTHONPATH=runtime python scripts/benchmark_generation.py
+PYTHONPATH=runtime python scripts/benchmark_generation.py \
+  --generations narration_v1 --seeds 101 202 303
+PYTHONPATH=runtime python scripts/benchmark_generation.py \
+  --languages Portuguese Auto --seeds 101 202 303
 PYTHONPATH=runtime python scripts/benchmark_references.py \
-  --voices bernardo_v1 another_profile \
-  --text 'Texto fixo para comparar referencias.'
+  --voices bernardo_v1 --seeds 101 202 303 \
+  --text 'Texto fixo para comparar referências.'
 PYTHONPATH=runtime python scripts/soak_test.py --count 50
 ~~~
 
 Generation/reference manifests record input identity, profiles, model/revision,
-seed, latency, duration, RTF, sample rate, output/checksum and basic metrics. The
+seed, language, latency, duration, RTF, sample rate, output/checksum, chunking identity,
+words-per-minute, characters-per-second, per-chunk duration/timing/guard status and basic metrics. The built-in corpus includes a synthetic
+long Portuguese regression similar in size and structure to the observed failure. The
 soak run records sequential success, latency/RTF and process memory. Optional
 Whisper WER/CER is not a runtime dependency and is intentionally deferred.
 

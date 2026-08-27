@@ -4,6 +4,7 @@ import time
 from collections.abc import Callable
 
 from fastapi.testclient import TestClient
+from voice_service.services.text_chunker import TextChunker
 
 
 def wait_terminal(client: TestClient, job_id: str) -> dict:
@@ -26,6 +27,8 @@ def test_live_is_available_before_readiness_and_ready_after_lifespan(app_factory
         ready = running.get("/health/ready")
         assert ready.status_code == 200
         assert ready.json()["worker_operational"] is True
+        assert ready.json()["chunking_identity"]
+        assert ready.json()["chunking_strategy_version"] == "qwen3-tts-chunking-v2"
         assert running.get("/health").json()["status"] == "ready"
         voices = running.get("/v1/voices").json()
         assert voices[0]["name"] == "test_voice"
@@ -72,6 +75,11 @@ def test_create_status_audio_and_safe_metadata(app_factory: Callable) -> None:
         assert result["result_subtype"] == "PCM_16"
         assert len(result["result_sha256"]) == 64
         assert result["current_chunk"] == result["total_chunks"]
+        assert result["metadata"]["chunking_strategy_version"] == "qwen3-tts-chunking-v2"
+        assert len(result["metadata"]["chunking_identity"]) == 64
+        assert result["metadata"]["chunks"][0]["text_length_chars"] > 0
+        assert result["metadata"]["chunks"][0]["audio_duration_seconds"] > 0
+        assert result["metadata"]["chunks"][0]["quality_guard_status"] == "passed"
         audio = client.get(result["audio_url"])
         assert audio.status_code == 200
         assert audio.content[:4] == b"RIFF"
@@ -101,6 +109,23 @@ def test_idempotency_replays_seed_zero_and_conflicts_on_changed_payload(
         assert conflict.status_code == 409
 
 
+def test_idempotency_rejects_stale_chunking_identity(app_factory: Callable) -> None:
+    app, _ = app_factory()
+    headers = {"Idempotency-Key": "chunking-sensitive-key"}
+    with TestClient(app) as client:
+        first = client.post(
+            "/v1/narrations", json={"text": "Mesmo texto.", "seed": 42}, headers=headers
+        )
+        assert first.status_code == 202
+        assert wait_terminal(client, first.json()["id"])["status"] == "completed"
+        service = app.state.runtime.require_service()
+        service.chunker = TextChunker(target_chars=41, max_chars=64)
+        incompatible = client.post(
+            "/v1/narrations", json={"text": "Mesmo texto.", "seed": 42}, headers=headers
+        )
+        assert incompatible.status_code == 409
+
+
 def test_provider_failure_is_persisted_without_internal_detail(app_factory: Callable) -> None:
     app, _ = app_factory(fail=True)
     with TestClient(app) as client:
@@ -111,6 +136,20 @@ def test_provider_failure_is_persisted_without_internal_detail(app_factory: Call
         assert result["error_message"] == "speech synthesis provider failed"
         assert "internal" not in result["error_message"]
         assert client.get(result["audio_url"]).status_code == 409
+
+
+def test_runaway_chunk_fails_without_retry_or_publication(app_factory: Callable) -> None:
+    app, provider = app_factory(output_duration_seconds=160.0)
+    with TestClient(app) as client:
+        created = client.post("/v1/narrations", json={"text": "Paragrafo comum."}).json()
+        result = wait_terminal(client, created["id"])
+        assert result["status"] == "failed"
+        assert result["error_category"] == "chunk_quality_guard"
+        assert result["metadata"]["quality_guard_status"] == "rejected"
+        assert result["metadata"]["rejected_chunk"]["audio_duration_seconds"] == 160.0
+        assert client.get(result["audio_url"]).status_code == 409
+    assert len(provider.calls) == 1
+    assert not list(app.state.runtime.settings.output_directory.glob("*.wav"))
 
 
 def test_worker_serializes_generation_and_queue_is_bounded(app_factory: Callable) -> None:

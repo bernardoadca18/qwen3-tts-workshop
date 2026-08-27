@@ -45,6 +45,15 @@ class AudioMetrics:
 
 
 @dataclass(frozen=True)
+class ChunkQualityMetrics:
+    text_length_chars: int
+    audio_duration_seconds: float
+    sample_rate: int
+    sample_peak: float
+    maximum_allowed_duration_seconds: float
+
+
+@dataclass(frozen=True)
 class VoiceProfile:
     name: str
     version: str
@@ -82,6 +91,7 @@ class NarrationJob:
     model_revision: str
     voice_identity: str
     generation_identity: str
+    chunking_identity: str
     request_fingerprint: str
     idempotency_key: str | None = None
     started_at: str | None = None

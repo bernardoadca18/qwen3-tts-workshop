@@ -44,6 +44,15 @@ def test_chunk_seed_derivation_is_stable_and_distinct() -> None:
     assert 1 <= derive_chunk_seed(77, 0) <= 2**31 - 1
 
 
+def test_chunking_identity_tracks_generation_affecting_limits() -> None:
+    baseline = TextChunker(target_chars=250, max_chars=400)
+    same = TextChunker(target_chars=250, max_chars=400)
+    changed = TextChunker(target_chars=251, max_chars=400)
+    assert baseline.strategy_version == "qwen3-tts-chunking-v2"
+    assert baseline.identity == same.identity
+    assert baseline.identity != changed.identity
+
+
 def test_empty_text_is_rejected() -> None:
     with pytest.raises(ValueError, match="empty"):
         TextChunker(target_chars=20, max_chars=30).chunk("", base_seed=1)

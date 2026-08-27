@@ -20,6 +20,19 @@ def test_settings_validate_device_dtype_and_chunk_bounds(tmp_path: Path) -> None
     assert settings.model_revision
 
 
+def test_production_chunk_and_quality_guard_defaults_are_conservative() -> None:
+    settings = Settings(_env_file=None)
+    assert settings.target_chunk_chars == 250
+    assert settings.max_chunk_chars == 400
+    assert settings.chunk_max_duration_seconds == 90
+    with pytest.raises(ValueError, match="CHUNK_DURATION_GRACE_SECONDS"):
+        Settings(
+            _env_file=None,
+            chunk_max_duration_seconds=10,
+            chunk_duration_grace_seconds=10,
+        )
+
+
 def test_voice_profile_loads_metadata_and_hash_is_stable(configured_settings: Settings) -> None:
     first = VoiceProfileRegistry.load(
         configured_settings.voice_profiles_file,

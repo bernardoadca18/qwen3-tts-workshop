@@ -22,6 +22,7 @@ class FakeTTSProvider:
         self.fail_initialize = False
         self.shutdown_called = False
         self.invalid_samples = False
+        self.output_duration_seconds: float | None = None
 
     async def initialize(self) -> None:
         self.initialized = True
@@ -60,7 +61,11 @@ class FakeTTSProvider:
             if self.invalid_samples:
                 samples = np.array([0.1, np.nan], dtype=np.float32)
             else:
-                frames = max(240, len(text) * 30)
+                frames = (
+                    round(self.output_duration_seconds * 24000)
+                    if self.output_duration_seconds is not None
+                    else max(240, len(text) * 30)
+                )
                 phase = np.arange(frames, dtype=np.float32)
                 samples = 0.2 * np.sin(2 * np.pi * 220 * phase / 24000)
             return AudioChunk(samples=samples, sample_rate=24000)

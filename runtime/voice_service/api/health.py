@@ -33,6 +33,12 @@ async def ready(request: Request) -> dict[str, object]:
         "queue_depth": runtime.service.queue_depth,
         "queue_capacity": runtime.settings.max_queue_size,
         "worker_operational": runtime.service.worker_operational,
+        "chunking_strategy_version": runtime.service.chunker.strategy_version,
+        "chunking_identity": runtime.service.chunker.identity,
+        "chunking": {
+            "target_chars": runtime.service.chunker.target_chars,
+            "max_chars": runtime.service.chunker.max_chars,
+        },
     }
 
 

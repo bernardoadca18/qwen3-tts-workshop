@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 
 from voice_service.domain import TextChunk
@@ -8,6 +9,7 @@ from voice_service.domain import TextChunk
 _PARAGRAPH = re.compile(r"\n[ \t]*\n+")
 _SENTENCE = re.compile(r"[.!?\u2026]+(?:[\"')\]]+)?(?:\s+|$)")
 _WHITESPACE = re.compile(r"\s+")
+CHUNKING_STRATEGY_VERSION = "qwen3-tts-chunking-v2"
 
 
 def derive_chunk_seed(base_seed: int, chunk_index: int) -> int:
@@ -22,6 +24,20 @@ class TextChunker:
             raise ValueError("invalid chunk size configuration")
         self.target_chars = target_chars
         self.max_chars = max_chars
+        canonical = json.dumps(
+            {
+                "strategy_version": CHUNKING_STRATEGY_VERSION,
+                "target_chars": target_chars,
+                "max_chars": max_chars,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        self.identity = hashlib.sha256(canonical.encode()).hexdigest()
+
+    @property
+    def strategy_version(self) -> str:
+        return CHUNKING_STRATEGY_VERSION
 
     def chunk(self, text: str, *, base_seed: int) -> list[TextChunk]:
         if not text:

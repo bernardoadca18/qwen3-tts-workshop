@@ -10,11 +10,52 @@ import numpy as np
 import soundfile as sf
 from numpy.typing import NDArray
 
-from voice_service.domain import AudioChunk, AudioMetrics, TextChunk
+from voice_service.domain import AudioChunk, AudioMetrics, ChunkQualityMetrics, TextChunk
 
 
 class AudioValidationError(ValueError):
     pass
+
+
+class ChunkQualityGuardError(AudioValidationError):
+    def __init__(self, reason: str, metrics: ChunkQualityMetrics):
+        super().__init__(f"generated chunk failed quality guard: {reason}")
+        self.reason = reason
+        self.metrics = metrics
+        self.diagnostics: dict[str, object] = {}
+
+
+def validate_audio_chunk_quality(
+    chunk: AudioChunk,
+    *,
+    text: str,
+    max_duration_seconds: float,
+    max_seconds_per_char: float,
+    duration_grace_seconds: float,
+    min_peak_amplitude: float,
+) -> ChunkQualityMetrics:
+    samples = normalize_audio_chunk(chunk)
+    text_length = len(text)
+    duration = samples.shape[0] / chunk.sample_rate
+    peak = float(np.max(np.abs(samples)))
+    relative_limit = duration_grace_seconds + max_seconds_per_char * max(text_length, 1)
+    allowed_duration = min(max_duration_seconds, relative_limit)
+    metrics = ChunkQualityMetrics(
+        text_length_chars=text_length,
+        audio_duration_seconds=duration,
+        sample_rate=chunk.sample_rate,
+        sample_peak=peak,
+        maximum_allowed_duration_seconds=allowed_duration,
+    )
+    if not math.isfinite(duration) or duration <= 0:
+        raise ChunkQualityGuardError("invalid_duration", metrics)
+    if peak <= min_peak_amplitude:
+        raise ChunkQualityGuardError("silent_or_near_silent", metrics)
+    if duration > max_duration_seconds:
+        raise ChunkQualityGuardError("absolute_duration_limit", metrics)
+    if duration > relative_limit:
+        raise ChunkQualityGuardError("duration_to_text_ratio", metrics)
+    return metrics
 
 
 def normalize_audio_chunk(chunk: AudioChunk) -> NDArray[np.float32]:

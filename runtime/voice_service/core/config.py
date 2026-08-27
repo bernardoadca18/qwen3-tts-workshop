@@ -27,8 +27,12 @@ class Settings(BaseSettings):
 
     max_queue_size: int = Field(default=32, ge=1, le=1000)
     max_text_chars: int = Field(default=50000, ge=1)
-    target_chunk_chars: int = Field(default=500, ge=32)
-    max_chunk_chars: int = Field(default=800, ge=64)
+    target_chunk_chars: int = Field(default=250, ge=32)
+    max_chunk_chars: int = Field(default=400, ge=64)
+    chunk_max_duration_seconds: float = Field(default=90.0, gt=0)
+    chunk_max_seconds_per_char: float = Field(default=0.35, gt=0)
+    chunk_duration_grace_seconds: float = Field(default=10.0, ge=0)
+    chunk_min_peak_amplitude: float = Field(default=1e-6, gt=0, le=1)
     job_retention_hours: int = Field(default=168, ge=1)
 
     output_directory: Path = Path("data/outputs")
@@ -60,6 +64,10 @@ class Settings(BaseSettings):
             raise ValueError("TARGET_CHUNK_CHARS cannot exceed MAX_CHUNK_CHARS")
         if self.max_chunk_chars > self.max_text_chars:
             raise ValueError("MAX_CHUNK_CHARS cannot exceed MAX_TEXT_CHARS")
+        if self.chunk_duration_grace_seconds >= self.chunk_max_duration_seconds:
+            raise ValueError(
+                "CHUNK_DURATION_GRACE_SECONDS must be below CHUNK_MAX_DURATION_SECONDS"
+            )
         if not self.warmup_text.strip():
             raise ValueError("WARMUP_TEXT must not be empty")
         return self

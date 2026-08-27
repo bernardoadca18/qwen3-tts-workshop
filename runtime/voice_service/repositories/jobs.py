@@ -37,6 +37,7 @@ class NarrationJobRepository:
                     model_revision TEXT NOT NULL,
                     voice_identity TEXT NOT NULL,
                     generation_identity TEXT NOT NULL,
+                    chunking_identity TEXT,
                     request_fingerprint TEXT NOT NULL,
                     idempotency_key TEXT UNIQUE,
                     output_uri TEXT,
@@ -56,6 +57,11 @@ class NarrationJobRepository:
                     ON narration_jobs(status, created_at);
                 """
             )
+            columns = {
+                row["name"] for row in connection.execute("PRAGMA table_info(narration_jobs)")
+            }
+            if "chunking_identity" not in columns:
+                connection.execute("ALTER TABLE narration_jobs ADD COLUMN chunking_identity TEXT")
 
     def create(self, job: NarrationJob) -> None:
         values = self._values(job)
@@ -130,13 +136,19 @@ class NarrationJobRepository:
         completed_at: str,
         category: str,
         message: str,
+        metadata: dict[str, object] | None = None,
     ) -> None:
+        values: dict[str, object] = {
+            "status": JobStatus.FAILED.value,
+            "completed_at": completed_at,
+            "error_category": category,
+            "error_message": message,
+        }
+        if metadata is not None:
+            values["metadata_json"] = json.dumps(metadata, sort_keys=True)
         self._update(
             job_id,
-            status=JobStatus.FAILED.value,
-            completed_at=completed_at,
-            error_category=category,
-            error_message=message,
+            **values,
         )
 
     def requeue(self, job_id: str) -> None:
@@ -221,6 +233,7 @@ class NarrationJobRepository:
             "model_revision": job.model_revision,
             "voice_identity": job.voice_identity,
             "generation_identity": job.generation_identity,
+            "chunking_identity": job.chunking_identity,
             "request_fingerprint": job.request_fingerprint,
             "idempotency_key": job.idempotency_key,
             "output_uri": job.output_uri,
@@ -257,6 +270,7 @@ class NarrationJobRepository:
             model_revision=row["model_revision"],
             voice_identity=row["voice_identity"],
             generation_identity=row["generation_identity"],
+            chunking_identity=row["chunking_identity"] or "",
             request_fingerprint=row["request_fingerprint"],
             idempotency_key=row["idempotency_key"],
             output_uri=row["output_uri"],

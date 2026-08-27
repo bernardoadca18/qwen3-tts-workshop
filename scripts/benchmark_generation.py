@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO, cast
 
 import soundfile as sf
 
@@ -17,6 +17,24 @@ DEFAULT_CORPUS = [
     {
         "name": "medium",
         "text": "A jornada continua pelas muralhas antigas. O vento muda, e o perigo se aproxima.",
+    },
+    {
+        "name": "synthetic-long-regression",
+        "text": (
+            "Em uma análise detalhada, o narrador explica como decisões de projeto, "
+            "mudanças de ritmo e escolhas de exploração transformam uma campanha longa. "
+            "Primeiro, ele apresenta o contexto histórico e descreve os personagens sem "
+            "pressa, mantendo cada ideia em uma frase clara. Depois, compara estratégias, "
+            "recursos, distâncias e consequências, sempre conectando a informação seguinte "
+            "ao ponto anterior. O objetivo deste texto sintético é representar uma narração "
+            "informativa extensa, com pontuação natural em português e parágrafos que possam "
+            "ser divididos de modo determinístico. Nenhum trecho exige uma pausa artificial, "
+            "e nenhuma frase isolada deve produzir minutos de áudio repetitivo. Ao final, a "
+            "conclusão retoma os argumentos principais, destaca o que foi aprendido durante "
+            "a jornada e oferece ao público uma síntese objetiva. Esse material não reproduz "
+            "um roteiro editorial privado; ele existe apenas para detectar gerações que não "
+            "terminam normalmente e se aproximam do limite autoregressivo configurado."
+        ),
     },
 ]
 
@@ -30,7 +48,7 @@ def json_request(url: str, *, payload: dict[str, Any] | None = None) -> dict[str
         method="POST" if data is not None else "GET",
     )
     with urllib.request.urlopen(request, timeout=60) as response:
-        return json.loads(response.read())
+        return cast(dict[str, Any], json.loads(response.read()))
 
 
 def wait_job(base_url: str, job_id: str) -> dict[str, Any]:
@@ -53,49 +71,113 @@ def main() -> None:
     parser.add_argument("--voice", default="bernardo_v1")
     parser.add_argument("--generation", default="narration_v1")
     parser.add_argument("--seed", type=int, default=12345)
+    parser.add_argument("--generations", nargs="+")
+    parser.add_argument("--seeds", nargs="+", type=int)
+    parser.add_argument("--languages", nargs="+", default=["Portuguese"])
     parser.add_argument("--output", type=Path, default=Path("benchmark-results/generation"))
     args = parser.parse_args()
     corpus = json.loads(args.corpus.read_text()) if args.corpus else DEFAULT_CORPUS
     args.output.mkdir(parents=True, exist_ok=True)
     manifest = args.output / "manifest.jsonl"
     with manifest.open("w", encoding="utf-8") as output:
+        generations = args.generations or [args.generation]
+        seeds = args.seeds or [args.seed]
         for sample in corpus:
-            started = time.monotonic()
-            created = json_request(
-                f"{args.base_url}/v1/narrations",
-                payload={
-                    "text": sample["text"],
-                    "voice_profile": args.voice,
-                    "generation_profile": args.generation,
-                    "seed": args.seed,
-                },
-            )
-            result = wait_job(args.base_url, created["id"])
-            if result["status"] != "completed":
-                raise RuntimeError(f"benchmark job failed: {result['error_category']}")
-            wav_path = args.output / f"{sample['name']}.wav"
-            download(f"{args.base_url}{result['audio_url']}", wav_path)
-            info = sf.info(wav_path)
-            elapsed = time.monotonic() - started
-            record = {
-                "name": sample["name"],
-                "text_sha256": hashlib.sha256(sample["text"].encode()).hexdigest(),
-                "voice_profile": result["voice_profile"],
-                "generation_profile": result["generation_profile"],
-                "model_id": result["model_id"],
-                "model_revision": result["model_revision"],
-                "seed": result["resolved_seed"],
-                "wall_clock_seconds": elapsed,
-                "output_duration_seconds": info.duration,
-                "real_time_factor": elapsed / info.duration,
-                "sample_rate": info.samplerate,
-                "output_path": str(wav_path),
-                "output_sha256": hashlib.sha256(wav_path.read_bytes()).hexdigest(),
-                "sample_peak_dbfs": result["sample_peak_dbfs"],
+            for generation in generations:
+                for seed in seeds:
+                    for language in args.languages:
+                        run_benchmark(
+                            args=args,
+                            sample=sample,
+                            generation=generation,
+                            seed=seed,
+                            language=language,
+                            output=output,
+                        )
+
+
+def run_benchmark(
+    *,
+    args: argparse.Namespace,
+    sample: dict[str, str],
+    generation: str,
+    seed: int,
+    language: str,
+    output: TextIO,
+) -> None:
+    started = time.monotonic()
+    created = json_request(
+        f"{args.base_url}/v1/narrations",
+        payload={
+            "text": sample["text"],
+            "voice_profile": args.voice,
+            "generation_profile": generation,
+            "seed": seed,
+            "language": language,
+        },
+    )
+    result = wait_job(args.base_url, created["id"])
+    elapsed = time.monotonic() - started
+    metadata = result.get("metadata") or {}
+    record = {
+        "job_id": result["id"],
+        "status": result["status"],
+        "name": sample["name"],
+        "text_sha256": hashlib.sha256(sample["text"].encode()).hexdigest(),
+        "voice_profile": result["voice_profile"],
+        "generation_profile": result["generation_profile"],
+        "model_id": result["model_id"],
+        "model_revision": result["model_revision"],
+        "seed": result["resolved_seed"],
+        "language": language,
+        "wall_clock_seconds": elapsed,
+        "voice_identity": metadata.get("voice_identity"),
+        "generation_identity": metadata.get("generation_identity"),
+        "chunking_strategy_version": metadata.get("chunking_strategy_version"),
+        "chunking_identity": metadata.get("chunking_identity"),
+        "chunks": metadata.get("chunks", []),
+        "quality_guard_status": metadata.get(
+            "quality_guard_status",
+            "passed" if result["status"] == "completed" else "not_evaluated",
+        ),
+    }
+    if result["status"] != "completed":
+        record.update(
+            {
+                "error_category": result.get("error_category"),
+                "error_message": result.get("error_message"),
+                "output_duration_seconds": None,
+                "real_time_factor": None,
+                "sample_rate": None,
+                "output_path": None,
+                "output_sha256": None,
+                "sample_peak_dbfs": None,
+                "words_per_minute": None,
+                "chars_per_second": None,
             }
-            output.write(json.dumps(record, sort_keys=True) + "\n")
-            output.flush()
-            print(json.dumps(record, indent=2))
+        )
+        output.write(json.dumps(record, sort_keys=True) + "\n")
+        output.flush()
+        print(json.dumps(record, indent=2))
+        return
+    wav_path = args.output / f"{sample['name']}--{generation}--{language}--seed-{seed}.wav"
+    download(f"{args.base_url}{result['audio_url']}", wav_path)
+    info = sf.info(wav_path)
+    record.update(
+        {
+            "output_duration_seconds": info.duration,
+            "real_time_factor": elapsed / info.duration,
+            "sample_rate": info.samplerate,
+            "output_path": str(wav_path),
+            "output_sha256": hashlib.sha256(wav_path.read_bytes()).hexdigest(),
+            "sample_peak_dbfs": result["sample_peak_dbfs"],
+            "words_per_minute": (len(sample["text"].split()) / info.duration) * 60,
+            "chars_per_second": len(sample["text"]) / info.duration,
+        }
+    )
+    output.write(json.dumps(record, sort_keys=True) + "\n")
+    output.flush()
+    print(json.dumps(record, indent=2))
 
 
 if __name__ == "__main__":

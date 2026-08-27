@@ -15,6 +15,7 @@ from voice_service.services.profiles import (
     GenerationProfileRegistry,
     VoiceProfileRegistry,
 )
+from voice_service.services.text_chunker import TextChunker
 
 from tests.fakes import FakeTTSProvider
 
@@ -42,6 +43,10 @@ def make_job(settings: Settings, *, status: JobStatus, seed: int = 777) -> Narra
         model_revision=settings.model_revision,
         voice_identity=voice.identity,
         generation_identity=generation.identity,
+        chunking_identity=TextChunker(
+            target_chars=settings.target_chunk_chars,
+            max_chars=settings.max_chunk_chars,
+        ).identity,
         request_fingerprint=uuid4().hex,
     )
 
