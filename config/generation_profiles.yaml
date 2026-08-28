@@ -12,3 +12,59 @@ generation_profiles:
       subtalker_top_p: 1.0
       subtalker_top_k: 50
       max_new_tokens: 2048
+
+  narration_temp080:
+    version: "1"
+    parameters:
+      do_sample: true
+      temperature: 0.8
+      top_p: 1.0
+      top_k: 50
+      repetition_penalty: 1.05
+      subtalker_dosample: true
+      subtalker_temperature: 0.9
+      subtalker_top_p: 1.0
+      subtalker_top_k: 50
+      max_new_tokens: 1024
+
+  narration_temp070:
+    version: "1"
+    parameters:
+      do_sample: true
+      temperature: 0.7
+      top_p: 1.0
+      top_k: 50
+      repetition_penalty: 1.05
+      subtalker_dosample: true
+      subtalker_temperature: 0.9
+      subtalker_top_p: 1.0
+      subtalker_top_k: 50
+      max_new_tokens: 1024
+
+  narration_subt080:
+    version: "1"
+    parameters:
+      do_sample: true
+      temperature: 0.9
+      top_p: 1.0
+      top_k: 50
+      repetition_penalty: 1.05
+      subtalker_dosample: true
+      subtalker_temperature: 0.8
+      subtalker_top_p: 1.0
+      subtalker_top_k: 50
+      max_new_tokens: 1024
+
+  narration_max1024:
+    version: "1"
+    parameters:
+      do_sample: true
+      temperature: 0.9
+      top_p: 1.0
+      top_k: 50
+      repetition_penalty: 1.05
+      subtalker_dosample: true
+      subtalker_temperature: 0.9
+      subtalker_top_p: 1.0
+      subtalker_top_k: 50
+      max_new_tokens: 1024
