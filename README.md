@@ -60,9 +60,10 @@ profile version or controls changes its identity and job provenance.
 GET /v1/generation-profiles exposes only name, version and canonical identity
 so callers can invalidate derived audio without learning provider controls.
 
-Pronunciation preprocessing belongs upstream in the future Orchestrator: the
-service accepts already-preprocessed synthesis text and preserves the submitted
-canonical text exactly in job storage.
+Pronunciation preprocessing and the operator Pronunciation Lab belong upstream
+in the Orchestrator. This service accepts already-resolved synthesis text,
+preserves the submitted text exactly in job storage and never loads an editorial
+lexicon or performs pronunciation rewriting.
 
 ## Run with Docker
 
