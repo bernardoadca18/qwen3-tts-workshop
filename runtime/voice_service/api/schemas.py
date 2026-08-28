@@ -37,6 +37,8 @@ class NarrationOut(BaseModel):
     result_subtype: str | None
     result_byte_size: int | None
     result_sha256: str | None
+    result_frame_count: int | None
+    result_riff_data_byte_size: int | None
     sample_peak_dbfs: float | None
     clipping_sample_count: int | None
     error_category: str | None
@@ -69,6 +71,8 @@ class NarrationOut(BaseModel):
             result_subtype=job.result_subtype,
             result_byte_size=job.result_byte_size,
             result_sha256=job.result_sha256,
+            result_frame_count=job.result_frame_count,
+            result_riff_data_byte_size=job.result_riff_data_byte_size,
             sample_peak_dbfs=job.sample_peak_dbfs,
             clipping_sample_count=job.clipping_sample_count,
             error_category=job.error_category,
@@ -84,7 +88,7 @@ class VoiceOut(BaseModel):
     version: str
     clone_mode: str
     audio_sha256: str
-    transcript_sha256: str
+    transcript_sha256: str | None
     duration_seconds: float
     sample_rate: int
     channels: int

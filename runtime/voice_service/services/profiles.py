@@ -82,26 +82,33 @@ class VoiceProfileRegistry:
     ) -> VoiceProfile:
         version = str(config.get("version", "")).strip()
         audio_path = Path(str(config.get("reference_audio", "")))
-        text_path = Path(str(config.get("reference_text", "")))
-        clone_mode = str(config.get("clone_mode", "icl"))
-        if not version or clone_mode != "icl":
+        raw_text_path = config.get("reference_text")
+        text_path = Path(str(raw_text_path)) if raw_text_path else None
+        clone_mode = str(config.get("clone_mode", "icl")).strip()
+        if not version or clone_mode not in {"icl", "x_vector_only"}:
             raise ProfileConfigurationError(f"invalid voice profile metadata: {name}")
-        if not audio_path.is_file() or not text_path.is_file():
+        if not audio_path.is_file() or (
+            clone_mode == "icl" and (text_path is None or not text_path.is_file())
+        ):
             raise ProfileConfigurationError(f"voice profile files are missing: {name}")
         try:
-            transcript = text_path.read_text(encoding="utf-8").strip()
+            transcript = (
+                text_path.read_text(encoding="utf-8").strip()
+                if clone_mode == "icl" and text_path is not None
+                else None
+            )
             info = sf.info(str(audio_path))
             samples, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
         except (OSError, RuntimeError, UnicodeError) as exc:
             raise ProfileConfigurationError(f"voice profile is unreadable: {name}") from exc
-        if not transcript:
+        if clone_mode == "icl" and not transcript:
             raise ProfileConfigurationError(f"voice profile transcript is empty: {name}")
         if samples.size == 0 or sample_rate <= 0 or info.frames <= 0:
             raise ProfileConfigurationError(f"voice profile audio is empty: {name}")
         if not np.all(np.isfinite(samples)):
             raise ProfileConfigurationError(f"voice profile audio has non-finite samples: {name}")
         audio_hash = _sha256_file(audio_path)
-        transcript_hash = _sha256_text(transcript)
+        transcript_hash = _sha256_text(transcript) if transcript is not None else None
         identity = _identity(
             {
                 "name": name,

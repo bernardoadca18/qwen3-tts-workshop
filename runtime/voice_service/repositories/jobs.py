@@ -47,6 +47,8 @@ class NarrationJobRepository:
                     result_subtype TEXT,
                     result_byte_size INTEGER,
                     result_sha256 TEXT,
+                    result_frame_count INTEGER,
+                    result_riff_data_byte_size INTEGER,
                     sample_peak_dbfs REAL,
                     clipping_sample_count INTEGER,
                     error_category TEXT,
@@ -62,6 +64,14 @@ class NarrationJobRepository:
             }
             if "chunking_identity" not in columns:
                 connection.execute("ALTER TABLE narration_jobs ADD COLUMN chunking_identity TEXT")
+            if "result_frame_count" not in columns:
+                connection.execute(
+                    "ALTER TABLE narration_jobs ADD COLUMN result_frame_count INTEGER"
+                )
+            if "result_riff_data_byte_size" not in columns:
+                connection.execute(
+                    "ALTER TABLE narration_jobs ADD COLUMN result_riff_data_byte_size INTEGER"
+                )
 
     def create(self, job: NarrationJob) -> None:
         values = self._values(job)
@@ -122,6 +132,8 @@ class NarrationJobRepository:
             result_subtype=metrics.subtype,
             result_byte_size=metrics.byte_size,
             result_sha256=metrics.sha256,
+            result_frame_count=metrics.frame_count,
+            result_riff_data_byte_size=metrics.riff_data_byte_size,
             sample_peak_dbfs=metrics.sample_peak_dbfs,
             clipping_sample_count=metrics.clipping_sample_count,
             error_category=None,
@@ -243,6 +255,8 @@ class NarrationJobRepository:
             "result_subtype": job.result_subtype,
             "result_byte_size": job.result_byte_size,
             "result_sha256": job.result_sha256,
+            "result_frame_count": job.result_frame_count,
+            "result_riff_data_byte_size": job.result_riff_data_byte_size,
             "sample_peak_dbfs": job.sample_peak_dbfs,
             "clipping_sample_count": job.clipping_sample_count,
             "error_category": job.error_category,
@@ -280,6 +294,8 @@ class NarrationJobRepository:
             result_subtype=row["result_subtype"],
             result_byte_size=row["result_byte_size"],
             result_sha256=row["result_sha256"],
+            result_frame_count=row["result_frame_count"],
+            result_riff_data_byte_size=row["result_riff_data_byte_size"],
             sample_peak_dbfs=row["sample_peak_dbfs"],
             clipping_sample_count=row["clipping_sample_count"],
             error_category=row["error_category"],

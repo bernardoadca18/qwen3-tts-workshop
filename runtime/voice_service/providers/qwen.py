@@ -76,16 +76,18 @@ class QwenTTSProvider:
         if profile.identity in self._voice_prompts:
             return
         assert self._model is not None
+        x_vector_only = profile.clone_mode == "x_vector_only"
         prompt = self._model.create_voice_clone_prompt(
             ref_audio=str(profile.reference_audio),
-            ref_text=profile.transcript,
-            x_vector_only_mode=False,
+            ref_text=None if x_vector_only else profile.transcript,
+            x_vector_only_mode=x_vector_only,
         )
         self._voice_prompts[profile.identity] = prompt
         logger.info(
-            "voice prompt cached profile=%s identity=%s audio_sha256=%s",
+            "voice prompt cached profile=%s identity=%s clone_mode=%s audio_sha256=%s",
             profile.name,
             profile.identity,
+            profile.clone_mode,
             profile.audio_sha256,
         )
 

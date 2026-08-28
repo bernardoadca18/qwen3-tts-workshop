@@ -32,6 +32,7 @@ def test_live_is_available_before_readiness_and_ready_after_lifespan(app_factory
         assert running.get("/health").json()["status"] == "ready"
         voices = running.get("/v1/voices").json()
         assert voices[0]["name"] == "test_voice"
+        assert voices[0]["clone_mode"] == "icl"
         assert "reference_audio" not in voices[0]
         generations = running.get("/v1/generation-profiles").json()
         assert generations == [
@@ -74,15 +75,33 @@ def test_create_status_audio_and_safe_metadata(app_factory: Callable) -> None:
         assert result["result_sample_rate"] == 24000
         assert result["result_subtype"] == "PCM_16"
         assert len(result["result_sha256"]) == 64
+        assert result["result_frame_count"] > 0
+        assert result["result_riff_data_byte_size"] == result["result_frame_count"] * 2
         assert result["current_chunk"] == result["total_chunks"]
         assert result["metadata"]["chunking_strategy_version"] == "qwen3-tts-chunking-v2"
         assert len(result["metadata"]["chunking_identity"]) == 64
         assert result["metadata"]["chunks"][0]["text_length_chars"] > 0
         assert result["metadata"]["chunks"][0]["audio_duration_seconds"] > 0
         assert result["metadata"]["chunks"][0]["quality_guard_status"] == "passed"
+        assert result["metadata"]["voice_clone_mode"] == "icl"
+        assert result["metadata"]["artifact_integrity"]["status"] == "passed"
+        assert result["metadata"]["assembly_timeline"]
         audio = client.get(result["audio_url"])
         assert audio.status_code == 200
         assert audio.content[:4] == b"RIFF"
+        assert int(audio.headers["content-length"]) == result["result_byte_size"]
+        assert audio.headers["etag"] == f'"{result["result_sha256"]}"'
+        head = client.head(result["audio_url"])
+        assert head.status_code == 200 and head.content == b""
+        start = client.get(result["audio_url"], headers={"Range": "bytes=0-31"})
+        middle = client.get(result["audio_url"], headers={"Range": "bytes=32-63"})
+        tail = client.get(result["audio_url"], headers={"Range": "bytes=-32"})
+        invalid = client.get(
+            result["audio_url"], headers={"Range": f"bytes={result['result_byte_size']}-"}
+        )
+        assert start.status_code == middle.status_code == tail.status_code == 206
+        assert start.headers["content-range"] == f"bytes 0-31/{result['result_byte_size']}"
+        assert invalid.status_code == 416
         assert client.get("/v1/narrations/missing").status_code == 404
         assert client.get("/v1/narrations/missing/audio").status_code == 404
 
@@ -107,6 +126,21 @@ def test_idempotency_replays_seed_zero_and_conflicts_on_changed_payload(
             "/v1/narrations", json={"text": "Texto diferente.", "seed": 0}, headers=headers
         )
         assert conflict.status_code == 409
+
+
+def test_completed_job_is_not_served_after_physical_artifact_replacement(
+    app_factory: Callable,
+) -> None:
+    app, _ = app_factory()
+    with TestClient(app) as client:
+        created = client.post("/v1/narrations", json={"text": "Artefato íntegro.", "seed": 7})
+        result = wait_terminal(client, created.json()["id"])
+        path = app.state.runtime.require_service().publisher.path_for(result["id"])
+        payload = bytearray(path.read_bytes())
+        payload[-1] ^= 1
+        path.write_bytes(payload)
+        response = client.get(result["audio_url"])
+    assert response.status_code == 409
 
 
 def test_idempotency_rejects_stale_chunking_identity(app_factory: Callable) -> None:

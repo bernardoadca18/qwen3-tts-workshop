@@ -13,6 +13,7 @@ from voice_service.api.schemas import (
     VoiceOut,
 )
 from voice_service.domain import JobStatus
+from voice_service.services.audio import AudioValidationError
 from voice_service.services.narration import (
     IdempotencyConflictError,
     NarrationClientError,
@@ -69,7 +70,7 @@ async def get_narration(job_id: str, request: Request) -> NarrationOut:
         raise HTTPException(status_code=404, detail="narration job not found") from exc
 
 
-@router.get("/v1/narrations/{job_id}/audio", tags=["narrations"])
+@router.api_route("/v1/narrations/{job_id}/audio", methods=["GET", "HEAD"], tags=["narrations"])
 async def get_narration_audio(job_id: str, request: Request) -> FileResponse:
     service = _service(request)
     try:
@@ -79,12 +80,25 @@ async def get_narration_audio(job_id: str, request: Request) -> FileResponse:
     if job.status is not JobStatus.COMPLETED:
         raise HTTPException(status_code=409, detail="narration audio is not available")
     try:
-        path = service.publisher.path_for(job.id)
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail="narration audio is not available") from exc
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="narration audio is not available")
-    return FileResponse(path, media_type="audio/wav", filename=f"{job.id}.wav")
+        path, metrics = service.verified_audio(job.id)
+    except (AudioValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409, detail="narration audio failed integrity checks"
+        ) from exc
+    return FileResponse(
+        path,
+        media_type="audio/wav",
+        filename=f"{job.id}.wav",
+        content_disposition_type="inline",
+        stat_result=path.stat(),
+        headers={
+            "ETag": f'"{metrics.sha256}"',
+            "Cache-Control": "private, no-cache, must-revalidate",
+            "X-Audio-SHA256": metrics.sha256,
+            "X-Audio-Duration-Seconds": f"{metrics.duration_seconds:.9f}",
+            "X-Audio-Frame-Count": str(metrics.frame_count),
+        },
+    )
 
 
 @router.get("/v1/voices", response_model=list[VoiceOut], tags=["voices"])

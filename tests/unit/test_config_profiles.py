@@ -91,6 +91,42 @@ def test_voice_profile_rejects_empty_transcript(
         )
 
 
+def test_xvector_profile_requires_only_audio_and_has_distinct_identity(
+    configured_settings: Settings, tmp_path: Path
+) -> None:
+    reference = tmp_path / "reference.wav"
+    transcript = tmp_path / "reference.txt"
+    sf.write(reference, np.zeros(2400, dtype=np.float32), 24000, subtype="PCM_16")
+    transcript.write_text("Texto de referência.", encoding="utf-8")
+    config = tmp_path / "voices.yaml"
+    config.write_text(
+        "voice_profiles:\n"
+        "  icl:\n"
+        "    version: '1'\n"
+        f"    reference_audio: {reference}\n"
+        f"    reference_text: {transcript}\n"
+        "    clone_mode: icl\n"
+        "  xvec:\n"
+        "    version: '1'\n"
+        f"    reference_audio: {reference}\n"
+        "    clone_mode: x_vector_only\n",
+        encoding="utf-8",
+    )
+    registry = VoiceProfileRegistry.load(
+        config,
+        model_id=configured_settings.model_id,
+        model_revision=configured_settings.model_revision,
+    )
+    icl = registry.get("icl")
+    xvec = registry.get("xvec")
+    assert icl.transcript == "Texto de referência."
+    assert icl.transcript_sha256 is not None
+    assert xvec.transcript is None
+    assert xvec.transcript_sha256 is None
+    assert xvec.clone_mode == "x_vector_only"
+    assert xvec.identity != icl.identity
+
+
 def test_generation_profile_resolves_and_rejects_invalid(
     configured_settings: Settings, tmp_path: Path
 ) -> None:

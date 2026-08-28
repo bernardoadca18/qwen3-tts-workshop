@@ -7,3 +7,9 @@ voice_profiles:
     reference_audio: /data/references/ref.wav
     reference_text: /data/references/ref.txt
     clone_mode: icl
+  bernardo_xvec_v1:
+    # Explicit opt-in timbre-only experiment. The transcript is deliberately
+    # absent because Qwen must condition only on the speaker embedding.
+    version: "1"
+    reference_audio: /data/references/ref.wav
+    clone_mode: x_vector_only

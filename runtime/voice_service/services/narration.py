@@ -6,11 +6,13 @@ import json
 import logging
 import secrets
 import time
+from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from uuid import uuid4
 
 from voice_service.core.config import Settings
-from voice_service.domain import JobStatus, NarrationJob
+from voice_service.domain import AudioMetrics, JobStatus, NarrationJob
 from voice_service.providers import ProviderError, ProviderOutOfMemoryError, TTSProvider
 from voice_service.repositories import NarrationJobRepository
 from voice_service.services.audio import (
@@ -18,6 +20,7 @@ from voice_service.services.audio import (
     AudioAssembler,
     AudioValidationError,
     ChunkQualityGuardError,
+    analyze_audio_chunk_signal,
     validate_audio_chunk_quality,
 )
 from voice_service.services.profiles import (
@@ -200,6 +203,28 @@ class NarrationService:
             raise LookupError("narration job not found")
         return job
 
+    def verified_audio(self, job_id: str) -> tuple[Path, AudioMetrics]:
+        job = self.get(job_id)
+        if job.status is not JobStatus.COMPLETED:
+            raise AudioValidationError("narration audio is not complete")
+        metrics = self.publisher.reconcile(job.id)
+        if metrics is None:
+            raise AudioValidationError("narration audio failed physical reconciliation")
+        comparisons = (
+            (job.result_sha256, metrics.sha256),
+            (job.result_byte_size, metrics.byte_size),
+            (job.result_sample_rate, metrics.sample_rate),
+            (job.result_channels, metrics.channels),
+            (job.result_subtype, metrics.subtype),
+            (job.result_frame_count, metrics.frame_count),
+            (job.result_riff_data_byte_size, metrics.riff_data_byte_size),
+        )
+        if any(expected is not None and expected != physical for expected, physical in comparisons):
+            raise AudioValidationError("narration audio differs from persisted result metadata")
+        if job.result_duration_seconds != metrics.duration_seconds:
+            raise AudioValidationError("narration duration differs from persisted result metadata")
+        return self.publisher.path_for(job.id), metrics
+
     async def wait_terminal(self, job_id: str, *, timeout: float) -> NarrationJob:
         deadline = asyncio.get_running_loop().time() + timeout
         while True:
@@ -293,6 +318,7 @@ class NarrationService:
                     exc.diagnostics = rejected
                     raise
                 audio_chunks.append(audio)
+                signal_diagnostics = analyze_audio_chunk_signal(audio)
                 chunk_diagnostics.append(
                     {
                         "index": chunk.index,
@@ -308,6 +334,7 @@ class NarrationService:
                         "maximum_allowed_duration_seconds": (
                             quality.maximum_allowed_duration_seconds
                         ),
+                        "signal_diagnostics": signal_diagnostics,
                     }
                 )
                 self.repository.update_progress(job.id, current_chunk=index)
@@ -322,14 +349,22 @@ class NarrationService:
                     len(chunks),
                     len(chunk.text),
                 )
-            assembled = self.assembler.assemble(chunks, audio_chunks)
-            output_uri, metrics = await asyncio.to_thread(self.publisher.publish, job.id, assembled)
+            assembly = self.assembler.assemble_with_timeline(chunks, audio_chunks)
+            output_uri, metrics = await asyncio.to_thread(
+                self.publisher.publish, job.id, assembly.audio
+            )
+            if metrics.frame_count != assembly.expected_frame_count:
+                self.publisher.delete(job.id)
+                raise AudioValidationError(
+                    "published narration sample count differs from assembled sample count"
+                )
             elapsed = time.monotonic() - started
             metadata: dict[str, object] = {
                 "provider": self.provider.metadata().provider,
                 "model_id": job.model_id,
                 "model_revision": job.model_revision,
                 "voice_identity": job.voice_identity,
+                "voice_clone_mode": voice.clone_mode,
                 "generation_identity": job.generation_identity,
                 "chunking_strategy_version": self.chunker.strategy_version,
                 "chunking_identity": self.chunker.identity,
@@ -339,6 +374,14 @@ class NarrationService:
                 },
                 "chunk_seed_strategy": "sha256:qwen3-tts-chunk-v1",
                 "chunks": chunk_diagnostics,
+                "assembly_timeline": list(assembly.timeline),
+                "artifact_integrity": {
+                    "status": "passed",
+                    "expected_frame_count": assembly.expected_frame_count,
+                    "physical": asdict(metrics),
+                    "expected_matches_physical": assembly.expected_frame_count
+                    == metrics.frame_count,
+                },
                 "synthesis_seconds": elapsed,
                 "real_time_factor": elapsed / metrics.duration_seconds,
             }

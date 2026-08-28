@@ -9,7 +9,7 @@ final video mastering and Orchestrator integration are intentionally absent.
 
 The FastAPI lifespan validates typed settings, opens SQLite, validates configured
 voice references, resolves one pinned Hugging Face snapshot, loads one Qwen model,
-builds each ICL voice prompt once, optionally warms up, recovers durable jobs and
+builds each configured ICL or speaker-embedding-only prompt once, optionally warms up, recovers durable jobs and
 starts one GPU worker. Importing voice_service.main does not import qwen-tts or
 torch and does not initialize CUDA.
 
@@ -47,6 +47,12 @@ the operator's current `/data/references/ref.wav` master. It is versioned as
 startup the service checks file presence, non-empty transcript, readable and
 finite non-empty audio, then records profile/version, hashes, duration, format
 and model/revision-bound identity.
+
+`bernardo_xvec_v1` is a separate opt-in profile using `x_vector_only_mode=True` and the same raw
+reference audio. It deliberately has no transcript: Qwen receives `ref_text=None`, discards
+reference speech codes from the prompt item and conditions on the speaker embedding only. Clone
+mode and transcript semantics participate in profile identity, so ICL and x-vector prompts cannot
+share cache entries. `bernardo_v1` is unchanged and remains the production default.
 
 The Qwen prompt is cached by this identity and is not recomputed per narration.
 A restart is the initial, explicit cache invalidation mechanism. GET /v1/voices
@@ -160,9 +166,12 @@ rejected chunk internally; the Orchestrator owns explicit retry policy.
 
 The assembled float waveform is encoded once as native-rate PCM16. Validation
 checks shape, non-empty/finite samples, sample rate, PCM range, duration, reopened
-WAV format and obvious clipping. SHA-256, size, duration, channels, subtype and
-sample peak are persisted. Atomic rename occurs before completed state. Partial
-WAVs are never served.
+WAV format, strict RIFF/data sizes, frame count and obvious clipping. SHA-256, size, duration,
+channels, subtype, frame count and sample peak are persisted. Atomic rename is followed by another
+reopen before completed state. HTTP publication reconciles those values, emits a SHA ETag, supports
+HEAD/byte ranges and refuses replaced or truncated output. Partial WAVs are never served. Job
+metadata attributes detected silence inside each generated chunk separately from configured
+chunk-boundary pauses and includes lightweight transient candidates.
 
 This is validation, not final mastering. The service does not apply LUFS gain,
 limiting, compression, EQ, denoising or enhancement. Final 48 kHz conversion and
@@ -213,7 +222,7 @@ PYTHONPATH=runtime python scripts/benchmark_generation.py \
 PYTHONPATH=runtime python scripts/benchmark_generation.py \
   --languages Portuguese Auto --seeds 101 202 303
 PYTHONPATH=runtime python scripts/benchmark_references.py \
-  --voices bernardo_v1 --seeds 101 202 303 \
+  --voices bernardo_v1 bernardo_xvec_v1 --seeds 101 202 303 \
   --text 'Texto fixo para comparar referências.'
 PYTHONPATH=runtime python scripts/soak_test.py --count 50
 ~~~
@@ -222,8 +231,12 @@ Generation/reference manifests record input identity, profiles, model/revision,
 seed, language, latency, duration, RTF, sample rate, output/checksum, chunking identity,
 words-per-minute, characters-per-second, per-chunk duration/timing/guard status and basic metrics. The built-in corpus includes a synthetic
 long Portuguese regression similar in size and structure to the observed failure. The
-soak run records sequential success, latency/RTF and process memory. Optional
-Whisper WER/CER is not a runtime dependency and is intentionally deferred.
+soak run records sequential success, latency/RTF and process memory.
+The complete seven-category ICL/x-vector comparison, including Orchestrator pronunciation,
+Faster-Whisper coverage, pause/transient diagnostics and an empty human-review rubric, is the
+explicit opt-in `backend/scripts/benchmark_clone_modes.py` command documented in the
+Orchestrator's `backend/docs/NARRATION_HARDENING.md`. Whisper remains outside this provider's
+runtime dependency set and no benchmark chooses a winning voice automatically.
 
 The direct real-model smoke is opt-in and never part of pytest:
 

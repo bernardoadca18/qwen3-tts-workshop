@@ -42,6 +42,8 @@ class AudioMetrics:
     sha256: str
     sample_peak_dbfs: float
     clipping_sample_count: int
+    frame_count: int
+    riff_data_byte_size: int
 
 
 @dataclass(frozen=True)
@@ -58,10 +60,10 @@ class VoiceProfile:
     name: str
     version: str
     reference_audio: Path
-    transcript: str
+    transcript: str | None
     clone_mode: str
     audio_sha256: str
-    transcript_sha256: str
+    transcript_sha256: str | None
     duration_seconds: float
     sample_rate: int
     channels: int
@@ -105,6 +107,8 @@ class NarrationJob:
     result_subtype: str | None = None
     result_byte_size: int | None = None
     result_sha256: str | None = None
+    result_frame_count: int | None = None
+    result_riff_data_byte_size: int | None = None
     sample_peak_dbfs: float | None = None
     clipping_sample_count: int | None = None
     error_category: str | None = None

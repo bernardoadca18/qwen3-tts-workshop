@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import struct
+from dataclasses import dataclass
 from pathlib import Path
 from uuid import uuid4
 
@@ -23,6 +25,13 @@ class ChunkQualityGuardError(AudioValidationError):
         self.reason = reason
         self.metrics = metrics
         self.diagnostics: dict[str, object] = {}
+
+
+@dataclass(frozen=True)
+class AudioAssemblyResult:
+    audio: AudioChunk
+    timeline: tuple[dict[str, object], ...]
+    expected_frame_count: int
 
 
 def validate_audio_chunk_quality(
@@ -95,27 +104,168 @@ class AudioAssembler:
         text_chunks: list[TextChunk],
         audio_chunks: list[AudioChunk],
     ) -> AudioChunk:
+        return self.assemble_with_timeline(text_chunks, audio_chunks).audio
+
+    def assemble_with_timeline(
+        self,
+        text_chunks: list[TextChunk],
+        audio_chunks: list[AudioChunk],
+    ) -> AudioAssemblyResult:
         if not text_chunks or len(text_chunks) != len(audio_chunks):
             raise AudioValidationError("audio chunk count does not match text chunks")
         normalized = [normalize_audio_chunk(chunk) for chunk in audio_chunks]
         sample_rate = audio_chunks[0].sample_rate
         channels = normalized[0].shape[1]
         parts: list[NDArray[np.float32]] = []
+        timeline: list[dict[str, object]] = []
+        current_frame = 0
         for index, (text_chunk, samples) in enumerate(zip(text_chunks, normalized, strict=True)):
             if audio_chunks[index].sample_rate != sample_rate or samples.shape[1] != channels:
                 raise AudioValidationError(
                     "provider changed sample rate or channels between chunks"
                 )
+            start = current_frame
             parts.append(samples)
+            current_frame += len(samples)
+            timeline.append(
+                {
+                    "kind": "generated_chunk",
+                    "chunk_index": text_chunk.index,
+                    "start_seconds": start / sample_rate,
+                    "end_seconds": current_frame / sample_rate,
+                    "boundary_type": text_chunk.boundary,
+                    "text_start_char": text_chunk.start_char,
+                    "text_end_char": text_chunk.end_char,
+                }
+            )
             if index < len(normalized) - 1:
                 pause_ms = self.pause_ms.get(text_chunk.boundary, self.pause_ms["fallback"])
                 pause_frames = round(sample_rate * pause_ms / 1000)
                 if pause_frames:
+                    pause_start = current_frame
                     parts.append(np.zeros((pause_frames, channels), dtype=np.float32))
-        return AudioChunk(samples=np.concatenate(parts, axis=0), sample_rate=sample_rate)
+                    current_frame += pause_frames
+                    timeline.append(
+                        {
+                            "kind": "inserted_pause",
+                            "chunk_index": text_chunk.index,
+                            "start_seconds": pause_start / sample_rate,
+                            "end_seconds": current_frame / sample_rate,
+                            "duration_seconds": pause_frames / sample_rate,
+                            "boundary_type": text_chunk.boundary,
+                            "reason": "configured deterministic chunk-boundary pause",
+                        }
+                    )
+        audio = AudioChunk(samples=np.concatenate(parts, axis=0), sample_rate=sample_rate)
+        if len(audio.samples) != current_frame:
+            raise AudioValidationError("assembled sample count differs from the timeline")
+        return AudioAssemblyResult(audio, tuple(timeline), current_frame)
+
+
+def analyze_audio_chunk_signal(chunk: AudioChunk) -> dict[str, object]:
+    samples = normalize_audio_chunk(chunk)
+    mono = np.mean(samples, axis=1)
+    threshold = 10.0 ** (-45.0 / 20.0)
+    mask = np.abs(mono) <= threshold
+    padded = np.pad(mask.astype(np.int8), (1, 1))
+    edges = np.flatnonzero(np.diff(padded))
+    minimum_frames = max(1, round(chunk.sample_rate * 0.15))
+    runs = [
+        (int(start), int(end))
+        for start, end in edges.reshape(-1, 2)
+        if end - start >= minimum_frames
+    ]
+    difference = np.abs(np.diff(mono, prepend=mono[0]))
+    median = float(np.median(difference))
+    mad = max(float(np.median(np.abs(difference - median))) * 1.4826, 1e-9)
+    transient_indexes = np.flatnonzero(difference >= max(0.05, median + 12.0 * mad))
+    transient_times: list[float] = []
+    for index in transient_indexes:
+        time_seconds = int(index) / chunk.sample_rate
+        if not transient_times or time_seconds - transient_times[-1] >= 0.04:
+            transient_times.append(time_seconds)
+        if len(transient_times) >= 50:
+            break
+    duration = len(mono) / chunk.sample_rate
+    silence_total = sum(end - start for start, end in runs) / chunk.sample_rate
+    return {
+        "version": "qwen_chunk_signal_diagnostics_v1",
+        "silence_threshold_dbfs": -45.0,
+        "silence_run_count": len(runs),
+        "silence_total_seconds": round(silence_total, 6),
+        "silence_ratio": round(silence_total / duration, 6),
+        "longest_silence_seconds": round(
+            max((end - start for start, end in runs), default=0) / chunk.sample_rate, 6
+        ),
+        "silence_runs": [
+            {
+                "start_seconds": round(start / chunk.sample_rate, 6),
+                "end_seconds": round(end / chunk.sample_rate, 6),
+            }
+            for start, end in runs
+        ],
+        "transient_candidate_count": len(transient_times),
+        "transient_candidate_times_seconds": [round(value, 6) for value in transient_times],
+    }
+
+
+def _inspect_riff(path: Path) -> tuple[int, int]:
+    file_size = path.stat().st_size
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(12)
+            if len(header) != 12 or header[:4] != b"RIFF" or header[8:] != b"WAVE":
+                raise AudioValidationError("published WAV has an invalid RIFF envelope")
+            declared_size = struct.unpack_from("<I", header, 4)[0] + 8
+            if declared_size != file_size:
+                raise AudioValidationError("published WAV RIFF size differs from physical size")
+            block_align: int | None = None
+            format_chunk_count = 0
+            data_sizes: list[int] = []
+            position = 12
+            while position < file_size:
+                chunk_header = stream.read(8)
+                if len(chunk_header) != 8:
+                    raise AudioValidationError("published WAV chunk header is truncated")
+                chunk_id = chunk_header[:4]
+                chunk_size = struct.unpack_from("<I", chunk_header, 4)[0]
+                position += 8
+                padded_size = chunk_size + chunk_size % 2
+                if position + padded_size > file_size:
+                    raise AudioValidationError("published WAV chunk is truncated")
+                if chunk_id == b"fmt ":
+                    format_chunk_count += 1
+                    payload = stream.read(chunk_size)
+                    if len(payload) < 16:
+                        raise AudioValidationError("published WAV format chunk is truncated")
+                    audio_format, channels, _, _, block_align, bits = struct.unpack_from(
+                        "<HHIIHH", payload
+                    )
+                    if audio_format not in {1, 0xFFFE}:
+                        raise AudioValidationError("published WAV is not PCM")
+                    if channels <= 0 or block_align <= 0 or bits <= 0:
+                        raise AudioValidationError("published WAV format chunk is invalid")
+                    if padded_size > chunk_size:
+                        stream.seek(padded_size - chunk_size, os.SEEK_CUR)
+                else:
+                    if chunk_id == b"data":
+                        data_sizes.append(chunk_size)
+                    stream.seek(padded_size, os.SEEK_CUR)
+                position += padded_size
+    except OSError as exc:
+        raise AudioValidationError("published WAV RIFF envelope is unreadable") from exc
+    if (
+        position != file_size
+        or block_align is None
+        or format_chunk_count != 1
+        or len(data_sizes) != 1
+    ):
+        raise AudioValidationError("published WAV must contain one complete format and data chunk")
+    return block_align, data_sizes[0]
 
 
 def validate_wav(path: Path, *, max_duration_seconds: float) -> AudioMetrics:
+    block_align, riff_data_byte_size = _inspect_riff(path)
     try:
         info = sf.info(str(path))
         samples, sample_rate = sf.read(str(path), dtype="float32", always_2d=True)
@@ -128,6 +278,8 @@ def validate_wav(path: Path, *, max_duration_seconds: float) -> AudioMetrics:
     duration = float(info.duration)
     if not math.isfinite(duration) or duration <= 0 or duration > max_duration_seconds:
         raise AudioValidationError("published WAV duration is invalid")
+    if int(info.frames) * block_align != riff_data_byte_size:
+        raise AudioValidationError("published WAV sample count differs from RIFF data size")
     absolute = np.abs(samples)
     peak = float(np.max(absolute))
     if peak <= 1e-6:
@@ -146,6 +298,8 @@ def validate_wav(path: Path, *, max_duration_seconds: float) -> AudioMetrics:
         sha256=digest,
         sample_peak_dbfs=peak_dbfs,
         clipping_sample_count=clipping_count,
+        frame_count=int(info.frames),
+        riff_data_byte_size=riff_data_byte_size,
     )
 
 
@@ -174,7 +328,11 @@ class AtomicWavPublisher:
                 max_duration_seconds=self.max_duration_seconds,
             )
             os.replace(temporary, final_path)
-            return f"narrations/{job_id}/audio", metrics
+            published = validate_wav(final_path, max_duration_seconds=self.max_duration_seconds)
+            if published != metrics:
+                final_path.unlink(missing_ok=True)
+                raise AudioValidationError("published WAV changed during atomic publication")
+            return f"narrations/{job_id}/audio", published
         finally:
             temporary.unlink(missing_ok=True)
 

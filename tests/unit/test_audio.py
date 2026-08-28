@@ -33,6 +33,19 @@ def test_assembly_preserves_order_and_inserts_silence_without_crossfade() -> Non
     np.testing.assert_allclose(result.samples[:10, 0], 0.25)
     np.testing.assert_allclose(result.samples[10:110, 0], 0.0)
     np.testing.assert_allclose(result.samples[110:, 0], -0.25)
+    timeline = assembler.assemble_with_timeline(
+        [text_chunk(0, "sentence"), text_chunk(1, "end")], [first, second]
+    )
+    assert timeline.expected_frame_count == 120
+    assert timeline.timeline[1] == {
+        "kind": "inserted_pause",
+        "chunk_index": 0,
+        "start_seconds": 0.01,
+        "end_seconds": 0.11,
+        "duration_seconds": 0.1,
+        "boundary_type": "sentence",
+        "reason": "configured deterministic chunk-boundary pause",
+    }
 
 
 def test_invalid_provider_audio_is_rejected() -> None:
@@ -82,6 +95,8 @@ def test_atomic_publication_reopens_validates_and_hashes(tmp_path: Path) -> None
     assert metrics.channels == 1
     assert metrics.subtype == "PCM_16"
     assert metrics.duration_seconds == pytest.approx(0.1)
+    assert metrics.frame_count == 2400
+    assert metrics.riff_data_byte_size == 4800
     assert len(metrics.sha256) == 64
     assert publisher.path_for(job_id).is_file()
     assert not list(tmp_path.glob("*.tmp.wav"))
@@ -92,6 +107,20 @@ def test_invalid_saved_wav_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "clipped.wav"
     sf.write(path, np.ones(2400, dtype=np.float32), 24000, subtype="PCM_16")
     with pytest.raises(AudioValidationError, match="clipping"):
+        validate_wav(path, max_duration_seconds=10)
+
+
+def test_truncated_riff_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "truncated.wav"
+    sf.write(
+        path,
+        np.linspace(-0.2, 0.2, 2400, dtype=np.float32),
+        24000,
+        subtype="PCM_16",
+    )
+    path.write_bytes(path.read_bytes()[:-10])
+
+    with pytest.raises(AudioValidationError, match="RIFF size"):
         validate_wav(path, max_duration_seconds=10)
 
 
