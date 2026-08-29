@@ -50,7 +50,14 @@ def test_initialize_resolves_pinned_snapshot_before_loading(
     assert calls["load"][1]["device_map"] == "cpu"
 
 
-def _voice(name: str, mode: str, transcript: str | None) -> VoiceProfile:
+def _voice(
+    name: str,
+    mode: str,
+    transcript: str | None,
+    *,
+    identity: str | None = None,
+    ephemeral: bool = False,
+) -> VoiceProfile:
     return VoiceProfile(
         name=name,
         version="1",
@@ -62,7 +69,8 @@ def _voice(name: str, mode: str, transcript: str | None) -> VoiceProfile:
         duration_seconds=10.0,
         sample_rate=24000,
         channels=1,
-        identity=("c" if mode == "icl" else "d") * 64,
+        identity=identity or ("c" if mode == "icl" else "d") * 64,
+        ephemeral=ephemeral,
     )
 
 
@@ -98,3 +106,79 @@ def test_prompt_preparation_keeps_icl_and_xvector_semantics_separate(
         },
     ]
     assert provider._voice_prompts[icl.identity] != provider._voice_prompts[xvec.identity]
+
+
+def test_ephemeral_prompt_cache_is_lru_bounded_while_registered_profiles_stay_pinned(
+    configured_settings,
+) -> None:
+    class FakeModel:
+        def create_voice_clone_prompt(self, **kwargs):
+            return kwargs["ref_audio"] + kwargs["x_vector_only_mode"].__str__()
+
+    settings = configured_settings.model_copy(update={"max_ephemeral_prompt_cache_entries": 2})
+    provider = QwenTTSProvider(settings)
+    provider._initialized = True
+    provider._model = FakeModel()
+    pinned = _voice("pinned", "icl", "Texto.", identity="p" * 64)
+    ephemeral = [
+        _voice(
+            f"ephemeral-{index}",
+            "x_vector_only",
+            None,
+            identity=str(index) * 64,
+            ephemeral=True,
+        )
+        for index in range(1, 4)
+    ]
+
+    provider._prepare_voice_sync(pinned)
+    provider._prepare_voice_sync(ephemeral[0])
+    provider._prepare_voice_sync(ephemeral[1])
+    provider._prepare_voice_sync(ephemeral[0])
+    provider._prepare_voice_sync(ephemeral[2])
+
+    assert pinned.identity in provider._voice_prompts
+    assert list(provider._ephemeral_voice_prompts) == [
+        ephemeral[0].identity,
+        ephemeral[2].identity,
+    ]
+    assert provider.prompt_cache_diagnostics() == {
+        "policy": "registered_pinned_ephemeral_lru_v1",
+        "entries": 3,
+        "pinned_entries": 1,
+        "registered_entries": 1,
+        "ephemeral_entries": 2,
+        "maximum_ephemeral_entries": 2,
+        "ephemeral_limit": 2,
+        "active_entries": 0,
+        "hits": 1,
+        "misses": 4,
+        "evictions": 1,
+        "estimated_bytes": None,
+        "memory_measurement": "unavailable_without_tensor_introspection",
+    }
+
+
+def test_active_ephemeral_prompt_is_not_evicted(configured_settings) -> None:
+    class FakeModel:
+        def create_voice_clone_prompt(self, **kwargs):
+            return object()
+
+    settings = configured_settings.model_copy(update={"max_ephemeral_prompt_cache_entries": 1})
+    provider = QwenTTSProvider(settings)
+    provider._initialized = True
+    provider._model = FakeModel()
+    first = _voice(
+        "first", "x_vector_only", None, identity="1" * 64, ephemeral=True
+    )
+    second = _voice(
+        "second", "x_vector_only", None, identity="2" * 64, ephemeral=True
+    )
+    provider._prepare_voice_sync(first)
+    provider._acquire_prompt(first.identity)
+    provider._prepare_voice_sync(second)
+
+    assert first.identity in provider._ephemeral_voice_prompts
+    assert second.identity in provider._ephemeral_voice_prompts
+    provider._release_prompt(first.identity)
+    assert list(provider._ephemeral_voice_prompts) == [second.identity]

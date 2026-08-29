@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -131,3 +132,84 @@ def test_storage_rejects_path_traversal(tmp_path: Path) -> None:
         validate_wav(silent, max_duration_seconds=10)
     with pytest.raises(ValueError, match="job id"):
         AtomicWavPublisher(tmp_path, max_duration_seconds=10).path_for("../escape")
+
+
+def test_streaming_publication_is_byte_identical_to_legacy_assembly(tmp_path: Path) -> None:
+    assembler = AudioAssembler(
+        sentence_pause_ms=100,
+        paragraph_pause_ms=200,
+        fallback_pause_ms=50,
+        hard_split_pause_ms=20,
+    )
+    chunks = [text_chunk(0, "sentence"), text_chunk(1, "end")]
+    audio = [
+        AudioChunk(np.linspace(-0.2, 0.2, 1000, dtype=np.float32), 24000),
+        AudioChunk(np.linspace(0.15, -0.15, 800, dtype=np.float32), 24000),
+    ]
+    publisher = AtomicWavPublisher(tmp_path, max_duration_seconds=10)
+    legacy_id = "b" * 32
+    stream_id = "c" * 32
+    legacy = assembler.assemble_with_timeline(chunks, audio)
+    publisher.publish(legacy_id, legacy.audio)
+    stream = publisher.begin_stream(stream_id, assembler)
+    try:
+        stream.append(chunks[0], audio[0], append_pause=True)
+        stream.append(chunks[1], audio[1], append_pause=False)
+        _, metrics, streamed = stream.publish()
+    finally:
+        stream.abort()
+
+    assert publisher.path_for(stream_id).read_bytes() == publisher.path_for(legacy_id).read_bytes()
+    assert streamed.timeline == legacy.timeline
+    assert streamed.expected_frame_count == legacy.expected_frame_count == metrics.frame_count
+
+
+def test_streaming_failure_cleans_temp_and_preserves_existing_artifact(tmp_path: Path) -> None:
+    assembler = AudioAssembler(
+        sentence_pause_ms=10,
+        paragraph_pause_ms=20,
+        fallback_pause_ms=5,
+        hard_split_pause_ms=2,
+    )
+    publisher = AtomicWavPublisher(tmp_path, max_duration_seconds=10)
+    job_id = "d" * 32
+    publisher.publish(job_id, AudioChunk(np.full(1000, 0.1, dtype=np.float32), 24000))
+    original = publisher.path_for(job_id).read_bytes()
+    stream = publisher.begin_stream(job_id, assembler)
+    try:
+        stream.append(
+            text_chunk(0, "sentence"),
+            AudioChunk(np.full(1000, 0.1, dtype=np.float32), 24000),
+            append_pause=True,
+        )
+        with pytest.raises(AudioValidationError, match="sample rate"):
+            stream.append(
+                text_chunk(1, "end"),
+                AudioChunk(np.full(1000, 0.1, dtype=np.float32), 16000),
+                append_pause=False,
+            )
+    finally:
+        stream.abort()
+    assert publisher.path_for(job_id).read_bytes() == original
+    assert not list(tmp_path.glob(".*.tmp.wav"))
+
+
+def test_wav_validation_uses_bounded_reads(tmp_path: Path) -> None:
+    path = tmp_path / "audio.wav"
+    sf.write(path, np.linspace(-0.2, 0.2, 2400), 24000, subtype="PCM_16")
+    with (
+        patch("voice_service.services.audio.sf.read", side_effect=AssertionError("full decode")),
+        patch.object(Path, "read_bytes", side_effect=AssertionError("full byte read")),
+    ):
+        metrics = validate_wav(path, max_duration_seconds=10)
+    assert metrics.frame_count == 2400
+
+
+def test_publisher_startup_removes_only_stale_atomic_temporaries(tmp_path: Path) -> None:
+    stale = tmp_path / ".old.tmp.wav"
+    unrelated = tmp_path / "keep.tmp"
+    stale.write_bytes(b"partial")
+    unrelated.write_bytes(b"operator file")
+    AtomicWavPublisher(tmp_path, max_duration_seconds=10).initialize()
+    assert not stale.exists()
+    assert unrelated.read_bytes() == b"operator file"

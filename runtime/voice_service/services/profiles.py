@@ -82,6 +82,8 @@ class VoiceProfileRegistry:
         config: dict[str, Any],
         model_id: str,
         model_revision: str,
+        *,
+        ephemeral: bool = False,
     ) -> VoiceProfile:
         version = str(config.get("version", "")).strip()
         audio_path = Path(str(config.get("reference_audio", "")))
@@ -101,15 +103,24 @@ class VoiceProfileRegistry:
                 else None
             )
             info = sf.info(str(audio_path))
-            samples, sample_rate = sf.read(str(audio_path), dtype="float32", always_2d=True)
+            decoded_frames = 0
+            with sf.SoundFile(str(audio_path), mode="r") as source:
+                for samples in source.blocks(
+                    blocksize=262_144,
+                    dtype="float32",
+                    always_2d=True,
+                ):
+                    if not np.all(np.isfinite(samples)):
+                        raise ProfileConfigurationError(
+                            f"voice profile audio has non-finite samples: {name}"
+                        )
+                    decoded_frames += len(samples)
         except (OSError, RuntimeError, UnicodeError) as exc:
             raise ProfileConfigurationError(f"voice profile is unreadable: {name}") from exc
         if clone_mode == "icl" and not transcript:
             raise ProfileConfigurationError(f"voice profile transcript is empty: {name}")
-        if samples.size == 0 or sample_rate <= 0 or info.frames <= 0:
+        if decoded_frames <= 0 or info.samplerate <= 0 or info.frames <= 0:
             raise ProfileConfigurationError(f"voice profile audio is empty: {name}")
-        if not np.all(np.isfinite(samples)):
-            raise ProfileConfigurationError(f"voice profile audio has non-finite samples: {name}")
         audio_hash = _sha256_file(audio_path)
         transcript_hash = _sha256_text(transcript) if transcript is not None else None
         identity = _identity(
@@ -135,6 +146,7 @@ class VoiceProfileRegistry:
             sample_rate=int(info.samplerate),
             channels=int(info.channels),
             identity=identity,
+            ephemeral=ephemeral,
         )
 
     def get(self, name: str) -> VoiceProfile:
@@ -184,6 +196,7 @@ def resolve_ephemeral_xvector_reference(
         },
         model_id,
         model_revision,
+        ephemeral=True,
     )
 
 

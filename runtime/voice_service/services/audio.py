@@ -34,6 +34,12 @@ class AudioAssemblyResult:
     expected_frame_count: int
 
 
+@dataclass(frozen=True)
+class StreamingAssemblyResult:
+    timeline: tuple[dict[str, object], ...]
+    expected_frame_count: int
+
+
 def validate_audio_chunk_quality(
     chunk: AudioChunk,
     *,
@@ -268,26 +274,50 @@ def validate_wav(path: Path, *, max_duration_seconds: float) -> AudioMetrics:
     block_align, riff_data_byte_size = _inspect_riff(path)
     try:
         info = sf.info(str(path))
-        samples, sample_rate = sf.read(str(path), dtype="float32", always_2d=True)
     except (OSError, RuntimeError) as exc:
         raise AudioValidationError("published WAV is unreadable") from exc
     if info.format != "WAV" or info.subtype != "PCM_16":
         raise AudioValidationError("result must be PCM16 WAV")
-    if samples.size == 0 or sample_rate <= 0 or not np.all(np.isfinite(samples)):
+    if info.frames <= 0 or info.samplerate <= 0:
         raise AudioValidationError("published WAV contains invalid audio")
     duration = float(info.duration)
     if not math.isfinite(duration) or duration <= 0 or duration > max_duration_seconds:
         raise AudioValidationError("published WAV duration is invalid")
     if int(info.frames) * block_align != riff_data_byte_size:
         raise AudioValidationError("published WAV sample count differs from RIFF data size")
-    absolute = np.abs(samples)
-    peak = float(np.max(absolute))
+    peak = 0.0
+    clipping_count = 0
+    sample_count = 0
+    try:
+        with sf.SoundFile(str(path), mode="r") as source:
+            for samples in source.blocks(
+                blocksize=262_144,
+                dtype="float32",
+                always_2d=True,
+            ):
+                if not np.all(np.isfinite(samples)):
+                    raise AudioValidationError("published WAV contains invalid audio")
+                absolute = np.abs(samples)
+                peak = max(peak, float(np.max(absolute)))
+                clipping_count += int(np.count_nonzero(absolute >= 0.999))
+                sample_count += int(absolute.size)
+    except AudioValidationError:
+        raise
+    except (OSError, RuntimeError) as exc:
+        raise AudioValidationError("published WAV is unreadable") from exc
+    if sample_count == 0:
+        raise AudioValidationError("published WAV contains invalid audio")
     if peak <= 1e-6:
         raise AudioValidationError("published WAV is silent")
-    clipping_count = int(np.count_nonzero(absolute >= 0.999))
-    if clipping_count / samples.size > 0.001:
+    if clipping_count / sample_count > 0.001:
         raise AudioValidationError("published WAV contains obvious digital clipping")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    try:
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+    except OSError as exc:
+        raise AudioValidationError("published WAV is unreadable") from exc
     peak_dbfs = 20 * math.log10(peak) if peak > 0 else float("-inf")
     return AudioMetrics(
         duration_seconds=duration,
@@ -295,7 +325,7 @@ def validate_wav(path: Path, *, max_duration_seconds: float) -> AudioMetrics:
         channels=int(info.channels),
         subtype=info.subtype,
         byte_size=path.stat().st_size,
-        sha256=digest,
+        sha256=digest.hexdigest(),
         sample_peak_dbfs=peak_dbfs,
         clipping_sample_count=clipping_count,
         frame_count=int(info.frames),
@@ -309,6 +339,11 @@ class AtomicWavPublisher:
         self.max_duration_seconds = max_duration_seconds
 
     def initialize(self) -> None:
+        self._ensure_output_directory()
+        for temporary in self.output_directory.glob(".*.tmp.wav"):
+            temporary.unlink(missing_ok=True)
+
+    def _ensure_output_directory(self) -> None:
         self.output_directory.mkdir(parents=True, exist_ok=True)
 
     def path_for(self, job_id: str) -> Path:
@@ -318,7 +353,7 @@ class AtomicWavPublisher:
 
     def publish(self, job_id: str, audio: AudioChunk) -> tuple[str, AudioMetrics]:
         samples = normalize_audio_chunk(audio)
-        self.initialize()
+        self._ensure_output_directory()
         final_path = self.path_for(job_id)
         temporary = self.output_directory / f".{job_id}.{uuid4().hex}.tmp.wav"
         try:
@@ -336,6 +371,10 @@ class AtomicWavPublisher:
         finally:
             temporary.unlink(missing_ok=True)
 
+    def begin_stream(self, job_id: str, assembler: AudioAssembler) -> AtomicWavStream:
+        self._ensure_output_directory()
+        return AtomicWavStream(self, job_id=job_id, assembler=assembler)
+
     def reconcile(self, job_id: str) -> AudioMetrics | None:
         path = self.path_for(job_id)
         if not path.is_file():
@@ -347,3 +386,110 @@ class AtomicWavPublisher:
 
     def delete(self, job_id: str) -> None:
         self.path_for(job_id).unlink(missing_ok=True)
+
+
+class AtomicWavStream:
+    """Incrementally assemble one job and atomically publish only after validation."""
+
+    def __init__(self, publisher: AtomicWavPublisher, *, job_id: str, assembler: AudioAssembler):
+        self.publisher = publisher
+        self.job_id = job_id
+        self.assembler = assembler
+        self.final_path = publisher.path_for(job_id)
+        self.temporary = publisher.output_directory / f".{job_id}.{uuid4().hex}.tmp.wav"
+        self._output: sf.SoundFile | None = None
+        self._sample_rate: int | None = None
+        self._channels: int | None = None
+        self._current_frame = 0
+        self._timeline: list[dict[str, object]] = []
+        self._published = False
+
+    def append(self, text_chunk: TextChunk, audio: AudioChunk, *, append_pause: bool) -> None:
+        if self._published:
+            raise AudioValidationError("cannot append to a published narration")
+        samples = normalize_audio_chunk(audio)
+        channels = int(samples.shape[1])
+        if self._output is None:
+            self._sample_rate = audio.sample_rate
+            self._channels = channels
+            self._output = sf.SoundFile(
+                str(self.temporary),
+                mode="w",
+                samplerate=audio.sample_rate,
+                channels=channels,
+                format="WAV",
+                subtype="PCM_16",
+            )
+        if audio.sample_rate != self._sample_rate or channels != self._channels:
+            raise AudioValidationError("provider changed sample rate or channels between chunks")
+        assert self._output is not None
+        assert self._sample_rate is not None
+        start_frame = self._current_frame
+        self._output.write(samples)
+        self._current_frame += len(samples)
+        self._timeline.append(
+            {
+                "kind": "generated_chunk",
+                "chunk_index": text_chunk.index,
+                "start_seconds": start_frame / self._sample_rate,
+                "end_seconds": self._current_frame / self._sample_rate,
+                "boundary_type": text_chunk.boundary,
+                "text_start_char": text_chunk.start_char,
+                "text_end_char": text_chunk.end_char,
+            }
+        )
+        if append_pause:
+            pause_ms = self.assembler.pause_ms.get(
+                text_chunk.boundary,
+                self.assembler.pause_ms["fallback"],
+            )
+            pause_frames = round(self._sample_rate * pause_ms / 1000)
+            if pause_frames:
+                pause_start = self._current_frame
+                self._output.write(
+                    np.zeros((pause_frames, channels), dtype=np.float32)
+                )
+                self._current_frame += pause_frames
+                self._timeline.append(
+                    {
+                        "kind": "inserted_pause",
+                        "chunk_index": text_chunk.index,
+                        "start_seconds": pause_start / self._sample_rate,
+                        "end_seconds": self._current_frame / self._sample_rate,
+                        "duration_seconds": pause_frames / self._sample_rate,
+                        "boundary_type": text_chunk.boundary,
+                        "reason": "configured deterministic chunk-boundary pause",
+                    }
+                )
+
+    def publish(self) -> tuple[str, AudioMetrics, StreamingAssemblyResult]:
+        if self._output is None or self._current_frame <= 0:
+            raise AudioValidationError("cannot publish an empty narration")
+        self._output.close()
+        self._output = None
+        metrics = validate_wav(
+            self.temporary,
+            max_duration_seconds=self.publisher.max_duration_seconds,
+        )
+        if metrics.frame_count != self._current_frame:
+            raise AudioValidationError("assembled sample count differs from the timeline")
+        os.replace(self.temporary, self.final_path)
+        published = validate_wav(
+            self.final_path,
+            max_duration_seconds=self.publisher.max_duration_seconds,
+        )
+        if published != metrics:
+            self.final_path.unlink(missing_ok=True)
+            raise AudioValidationError("published WAV changed during atomic publication")
+        self._published = True
+        return (
+            f"narrations/{self.job_id}/audio",
+            published,
+            StreamingAssemblyResult(tuple(self._timeline), self._current_frame),
+        )
+
+    def abort(self) -> None:
+        if self._output is not None:
+            self._output.close()
+            self._output = None
+        self.temporary.unlink(missing_ok=True)

@@ -68,6 +68,7 @@ class VoiceProfile:
     sample_rate: int
     channels: int
     identity: str
+    ephemeral: bool = False
 
 
 @dataclass(frozen=True)

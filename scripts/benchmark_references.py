@@ -19,11 +19,25 @@ def main() -> None:
     parser.add_argument("--seeds", nargs="+", type=int)
     parser.add_argument("--languages", nargs="+", default=["Portuguese"])
     parser.add_argument("--output", type=Path, default=Path("benchmark-results/references"))
+    parser.add_argument("--run", action="store_true")
     args = parser.parse_args()
+    seeds = args.seeds or [args.seed]
+    plan = {
+        "mode": "run" if args.run else "plan",
+        "voices": args.voices,
+        "seeds": seeds,
+        "languages": args.languages,
+        "planned_generations": len(args.voices) * len(seeds) * len(args.languages),
+        "output": str(args.output),
+    }
+    if not args.run:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+        print("PLAN ONLY: no Qwen request or output write was performed. Add --run to execute.")
+        return
     args.output.mkdir(parents=True, exist_ok=True)
     results = []
     for voice in args.voices:
-        for seed in args.seeds or [args.seed]:
+        for seed in seeds:
             for language in args.languages:
                 started = time.monotonic()
                 job = json_request(

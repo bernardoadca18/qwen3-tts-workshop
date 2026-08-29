@@ -18,7 +18,24 @@ def main() -> None:
     parser.add_argument("--voice", default="bernardo_v1")
     parser.add_argument("--generation", default="narration_v1")
     parser.add_argument("--output", type=Path, default=Path("benchmark-results/soak.json"))
+    parser.add_argument("--run", action="store_true")
     args = parser.parse_args()
+    if not args.run:
+        print(
+            json.dumps(
+                {
+                    "mode": "plan",
+                    "count": args.count,
+                    "voice": args.voice,
+                    "generation": args.generation,
+                    "output": str(args.output),
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        print("PLAN ONLY: no Qwen request or output write was performed. Add --run to execute.")
+        return
     records = []
     for index in range(args.count):
         started = time.monotonic()

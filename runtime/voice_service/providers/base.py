@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from voice_service.domain import AudioChunk, GenerationProfile, VoiceProfile
 
@@ -24,6 +24,7 @@ class ProviderMetadata:
     attention_impl: str
     initialized: bool
     cuda_available: bool | None
+    prompt_cache: dict[str, Any] | None = None
 
 
 class TTSProvider(Protocol):

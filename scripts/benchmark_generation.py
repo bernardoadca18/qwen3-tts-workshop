@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import shutil
 import time
 import urllib.error
 import urllib.request
@@ -61,7 +62,16 @@ def wait_job(base_url: str, job_id: str) -> dict[str, Any]:
 
 def download(url: str, path: Path) -> None:
     with urllib.request.urlopen(url, timeout=120) as response:
-        path.write_bytes(response.read())
+        with path.open("wb") as output:
+            shutil.copyfileobj(response, output, length=1024 * 1024)
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def main() -> None:
@@ -75,13 +85,27 @@ def main() -> None:
     parser.add_argument("--seeds", nargs="+", type=int)
     parser.add_argument("--languages", nargs="+", default=["Portuguese"])
     parser.add_argument("--output", type=Path, default=Path("benchmark-results/generation"))
+    parser.add_argument("--run", action="store_true")
     args = parser.parse_args()
     corpus = json.loads(args.corpus.read_text()) if args.corpus else DEFAULT_CORPUS
+    generations = args.generations or [args.generation]
+    seeds = args.seeds or [args.seed]
+    plan = {
+        "mode": "run" if args.run else "plan",
+        "corpus_cases": len(corpus),
+        "generations": generations,
+        "seeds": seeds,
+        "languages": args.languages,
+        "planned_generations": len(corpus) * len(generations) * len(seeds) * len(args.languages),
+        "output": str(args.output),
+    }
+    if not args.run:
+        print(json.dumps(plan, indent=2, sort_keys=True))
+        print("PLAN ONLY: no Qwen request or output write was performed. Add --run to execute.")
+        return
     args.output.mkdir(parents=True, exist_ok=True)
     manifest = args.output / "manifest.jsonl"
     with manifest.open("w", encoding="utf-8") as output:
-        generations = args.generations or [args.generation]
-        seeds = args.seeds or [args.seed]
         for sample in corpus:
             for generation in generations:
                 for seed in seeds:
@@ -169,7 +193,7 @@ def run_benchmark(
             "real_time_factor": elapsed / info.duration,
             "sample_rate": info.samplerate,
             "output_path": str(wav_path),
-            "output_sha256": hashlib.sha256(wav_path.read_bytes()).hexdigest(),
+            "output_sha256": sha256_file(wav_path),
             "sample_peak_dbfs": result["sample_peak_dbfs"],
             "words_per_minute": (len(sample["text"].split()) / info.duration) * 60,
             "chars_per_second": len(sample["text"]) / info.duration,

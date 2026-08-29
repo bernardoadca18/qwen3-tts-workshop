@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     chunk_duration_grace_seconds: float = Field(default=10.0, ge=0)
     chunk_min_peak_amplitude: float = Field(default=1e-6, gt=0, le=1)
     job_retention_hours: int = Field(default=168, ge=1)
+    max_ephemeral_prompt_cache_entries: int = Field(default=8, ge=1, le=128)
 
     output_directory: Path = Path("data/outputs")
     job_database_path: Path = Path("data/jobs/narrations.sqlite3")

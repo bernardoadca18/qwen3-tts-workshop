@@ -17,6 +17,7 @@ from voice_service.providers import ProviderError, ProviderOutOfMemoryError, TTS
 from voice_service.repositories import NarrationJobRepository
 from voice_service.services.audio import (
     AtomicWavPublisher,
+    AtomicWavStream,
     AudioAssembler,
     AudioValidationError,
     ChunkQualityGuardError,
@@ -315,6 +316,8 @@ class NarrationService:
         if job is None or job.status is not JobStatus.QUEUED:
             return
         started = time.monotonic()
+        stream: AtomicWavStream | None = None
+        chunk_diagnostics: list[dict[str, object]] = []
         try:
             voice = self._resolve_job_voice(job)
             generation = self.generations.get(job.generation_profile)
@@ -329,8 +332,7 @@ class NarrationService:
             await self.provider.prepare_voice(voice)
             chunks = self.chunker.chunk(job.text, base_seed=job.resolved_seed)
             self.repository.mark_running(job.id, started_at=utc_now(), total_chunks=len(chunks))
-            audio_chunks = []
-            chunk_diagnostics: list[dict[str, object]] = []
+            stream = self.publisher.begin_stream(job.id, self.assembler)
             for index, chunk in enumerate(chunks, start=1):
                 chunk_started = time.monotonic()
                 audio = await self.provider.generate(
@@ -383,8 +385,13 @@ class NarrationService:
                     )
                     exc.diagnostics = rejected
                     raise
-                audio_chunks.append(audio)
                 signal_diagnostics = analyze_audio_chunk_signal(audio)
+                await asyncio.to_thread(
+                    stream.append,
+                    chunk,
+                    audio,
+                    append_pause=index < len(chunks),
+                )
                 chunk_diagnostics.append(
                     {
                         "index": chunk.index,
@@ -415,10 +422,7 @@ class NarrationService:
                     len(chunks),
                     len(chunk.text),
                 )
-            assembly = self.assembler.assemble_with_timeline(chunks, audio_chunks)
-            output_uri, metrics = await asyncio.to_thread(
-                self.publisher.publish, job.id, assembly.audio
-            )
+            output_uri, metrics, assembly = await asyncio.to_thread(stream.publish)
             if metrics.frame_count != assembly.expected_frame_count:
                 self.publisher.delete(job.id)
                 raise AudioValidationError(
@@ -506,6 +510,9 @@ class NarrationService:
             self._fail(job, "storage_failure", "audio result could not be stored")
         except Exception:
             self._fail(job, "synthesis_failure", "narration generation failed")
+        finally:
+            if stream is not None:
+                stream.abort()
 
     def _fail(
         self,

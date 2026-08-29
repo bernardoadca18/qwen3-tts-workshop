@@ -54,8 +54,11 @@ reference speech codes from the prompt item and conditions on the speaker embedd
 mode and transcript semantics participate in profile identity, so ICL and x-vector prompts cannot
 share cache entries. `bernardo_v1` is unchanged and remains the production default.
 
-The Qwen prompt is cached by this identity and is not recomputed per narration.
-A restart is the initial, explicit cache invalidation mechanism. GET /v1/voices
+The Qwen prompt is cached by this identity and is not recomputed per narration. Registered profile
+prompts are pinned for the service lifetime. Benchmark-only ephemeral prompts use a bounded LRU
+(`MAX_EPHEMERAL_PROMPT_CACHE_ENTRIES`, default 8); an active prompt is never evicted. Readiness
+exposes entry/hit/miss/eviction counters without reference paths or tensor contents.
+A restart remains the explicit invalidation mechanism for registered prompts. GET /v1/voices
 returns safe metadata and never host paths.
 
 ## Generation profiles
@@ -164,7 +167,10 @@ stylistic speaking-rate differences. Rejection fails the job as `chunk_quality_g
 no WAV and records safe chunk index/length/duration/seed/reason diagnostics. Qwen never retries a
 rejected chunk internally; the Orchestrator owns explicit retry policy.
 
-The assembled float waveform is encoded once as native-rate PCM16. Validation
+After each chunk passes the existing guard, it is appended to a temporary native-rate PCM16 WAV
+together with its deterministic pause. Only the current quality-bounded chunk is resident; the
+complete narration is never concatenated in memory. The temporary WAV is validated and atomically
+renamed after the final chunk, and failures remove only the temporary file. Validation
 checks shape, non-empty/finite samples, sample rate, PCM range, duration, reopened
 WAV format, strict RIFF/data sizes, frame count and obvious clipping. SHA-256, size, duration,
 channels, subtype, frame count and sample peak are persisted. Atomic rename is followed by another
@@ -218,16 +224,17 @@ With the service running:
 ~~~bash
 PYTHONPATH=runtime python scripts/benchmark_generation.py
 PYTHONPATH=runtime python scripts/benchmark_generation.py \
-  --generations narration_v1 --seeds 101 202 303
+  --generations narration_v1 --seeds 101 202 303 --run
 PYTHONPATH=runtime python scripts/benchmark_generation.py \
-  --languages Portuguese Auto --seeds 101 202 303
+  --languages Portuguese Auto --seeds 101 202 303 --run
 PYTHONPATH=runtime python scripts/benchmark_references.py \
   --voices bernardo_v1 bernardo_xvec_v1 --seeds 101 202 303 \
-  --text 'Texto fixo para comparar referências.'
-PYTHONPATH=runtime python scripts/soak_test.py --count 50
+  --text 'Texto fixo para comparar referências.' --run
+PYTHONPATH=runtime python scripts/soak_test.py --count 50 --run
 ~~~
 
-Generation/reference manifests record input identity, profiles, model/revision,
+Every generation/reference/soak command is a strict plan unless `--run` is present; plan mode makes
+no HTTP request and writes no output. Generation/reference manifests record input identity, profiles, model/revision,
 seed, language, latency, duration, RTF, sample rate, output/checksum, chunking identity,
 words-per-minute, characters-per-second, per-chunk duration/timing/guard status and basic metrics. The built-in corpus includes a synthetic
 long Portuguese regression similar in size and structure to the observed failure. The
