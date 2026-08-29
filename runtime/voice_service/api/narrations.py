@@ -6,6 +6,7 @@ from fastapi import APIRouter, Header, HTTPException, Request, status
 from fastapi.responses import FileResponse
 
 from voice_service.api.schemas import (
+    BenchmarkNarrationCreate,
     GenerationProfileOut,
     LegacyGenerateRequest,
     NarrationCreate,
@@ -49,6 +50,37 @@ async def create_narration(
             text=payload.text,
             language=payload.language,
             voice_profile_name=payload.voice_profile,
+            generation_profile_name=payload.generation_profile,
+            requested_seed=payload.seed,
+            idempotency_key=idempotency_key,
+        )
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except NarrationClientError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NarrationQueueFullError as exc:
+        raise HTTPException(status_code=503, detail="narration queue is full") from exc
+    return NarrationOut.from_job(job, created=created)
+
+
+@router.post(
+    "/v1/benchmark/narrations",
+    response_model=NarrationOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    tags=["benchmark"],
+)
+async def create_benchmark_narration(
+    payload: BenchmarkNarrationCreate,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> NarrationOut:
+    if idempotency_key is not None and not (1 <= len(idempotency_key) <= 200):
+        raise HTTPException(status_code=400, detail="invalid Idempotency-Key")
+    try:
+        job, created = await _service(request).create_benchmark(
+            text=payload.text,
+            language=payload.language,
+            reference_id=payload.reference_id,
             generation_profile_name=payload.generation_profile,
             requested_seed=payload.seed,
             idempotency_key=idempotency_key,

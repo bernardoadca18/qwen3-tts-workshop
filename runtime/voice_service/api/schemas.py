@@ -15,6 +15,16 @@ class NarrationCreate(BaseModel):
     seed: int = Field(default=0, ge=0, le=2**31 - 1)
 
 
+class BenchmarkNarrationCreate(BaseModel):
+    """Internal benchmark request; the reference is relative to /data/references."""
+
+    text: str
+    language: str = "Portuguese"
+    reference_id: str = Field(min_length=1, max_length=500)
+    generation_profile: str | None = None
+    seed: int = Field(default=0, ge=0, le=2**31 - 1)
+
+
 class NarrationOut(BaseModel):
     id: str
     status: str

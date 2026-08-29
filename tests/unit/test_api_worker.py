@@ -106,6 +106,54 @@ def test_create_status_audio_and_safe_metadata(app_factory: Callable) -> None:
         assert client.get("/v1/narrations/missing/audio").status_code == 404
 
 
+def test_benchmark_reference_uses_ephemeral_xvector_profile_without_registry_mutation(
+    app_factory: Callable,
+) -> None:
+    app, provider = app_factory()
+    references = app.state.runtime.settings.references_directory
+    (references / "candidate.wav").write_bytes((references / "reference.wav").read_bytes())
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/benchmark/narrations",
+            json={
+                "text": "Referência temporária.",
+                "reference_id": "candidate.wav",
+                "generation_profile": "test_generation",
+                "seed": 42,
+            },
+        )
+        assert created.status_code == 202
+        result = wait_terminal(client, created.json()["id"])
+
+    assert result["status"] == "completed"
+    assert result["voice_profile"].startswith("benchmark:")
+    assert result["metadata"]["voice_clone_mode"] == "x_vector_only"
+    assert result["metadata"]["benchmark_reference"]["reference_id"] == "candidate.wav"
+    assert result["metadata"]["benchmark_reference"]["clone_mode"] == "x_vector_only"
+    assert len(app.state.runtime.voices.all()) == 1
+    assert len(provider.prepared) == 2
+
+
+def test_benchmark_reference_rejects_traversal_and_symlink_escape(app_factory: Callable) -> None:
+    app, _ = app_factory()
+    references = app.state.runtime.settings.references_directory
+    outside = references.parent / "outside.wav"
+    outside.write_bytes((references / "reference.wav").read_bytes())
+    (references / "escape.wav").symlink_to(outside)
+    with TestClient(app) as client:
+        traversal = client.post(
+            "/v1/benchmark/narrations",
+            json={"text": "Não deve executar.", "reference_id": "../outside.wav"},
+        )
+        escape = client.post(
+            "/v1/benchmark/narrations",
+            json={"text": "Não deve executar.", "reference_id": "escape.wav"},
+        )
+
+    assert traversal.status_code == 400
+    assert escape.status_code == 400
+
+
 def test_idempotency_replays_seed_zero_and_conflicts_on_changed_payload(
     app_factory: Callable,
 ) -> None:

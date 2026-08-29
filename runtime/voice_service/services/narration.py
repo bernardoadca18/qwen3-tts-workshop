@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from voice_service.core.config import Settings
-from voice_service.domain import AudioMetrics, JobStatus, NarrationJob
+from voice_service.domain import AudioMetrics, JobStatus, NarrationJob, VoiceProfile
 from voice_service.providers import ProviderError, ProviderOutOfMemoryError, TTSProvider
 from voice_service.repositories import NarrationJobRepository
 from voice_service.services.audio import (
@@ -27,6 +27,7 @@ from voice_service.services.profiles import (
     GenerationProfileRegistry,
     ProfileConfigurationError,
     VoiceProfileRegistry,
+    resolve_ephemeral_xvector_reference,
 )
 from voice_service.services.text_chunker import TextChunker
 
@@ -136,6 +137,65 @@ class NarrationService:
         requested_seed: int,
         idempotency_key: str | None,
     ) -> tuple[NarrationJob, bool]:
+        return await self._create(
+            text=text,
+            language=language,
+            voice_profile_name=voice_profile_name,
+            generation_profile_name=generation_profile_name,
+            requested_seed=requested_seed,
+            idempotency_key=idempotency_key,
+        )
+
+    async def create_benchmark(
+        self,
+        *,
+        text: str,
+        language: str,
+        reference_id: str,
+        generation_profile_name: str | None,
+        requested_seed: int,
+        idempotency_key: str | None,
+    ) -> tuple[NarrationJob, bool]:
+        try:
+            voice = resolve_ephemeral_xvector_reference(
+                reference_id,
+                references_directory=self.settings.references_directory,
+                model_id=self.settings.model_id,
+                model_revision=self.settings.model_revision,
+            )
+        except ProfileConfigurationError as exc:
+            raise NarrationClientError(str(exc)) from exc
+        reference_metadata: dict[str, object] = {
+            "reference_id": voice.reference_audio.relative_to(
+                self.settings.references_directory.resolve()
+            ).as_posix(),
+            "reference_sha256": voice.audio_sha256,
+            "reference_identity": voice.identity,
+            "clone_mode": "x_vector_only",
+        }
+        return await self._create(
+            text=text,
+            language=language,
+            voice_profile_name=None,
+            generation_profile_name=generation_profile_name,
+            requested_seed=requested_seed,
+            idempotency_key=idempotency_key,
+            voice_override=voice,
+            benchmark_reference=reference_metadata,
+        )
+
+    async def _create(
+        self,
+        *,
+        text: str,
+        language: str,
+        voice_profile_name: str | None,
+        generation_profile_name: str | None,
+        requested_seed: int,
+        idempotency_key: str | None,
+        voice_override: VoiceProfile | None = None,
+        benchmark_reference: dict[str, object] | None = None,
+    ) -> tuple[NarrationJob, bool]:
         if not text.strip():
             raise NarrationClientError("text must not be empty")
         if len(text) > self.settings.max_text_chars:
@@ -145,7 +205,7 @@ class NarrationService:
         voice_name = voice_profile_name or self.settings.default_voice_profile
         generation_name = generation_profile_name or self.settings.default_generation_profile
         try:
-            voice = self.voices.get(voice_name)
+            voice = voice_override or self.voices.get(voice_name)
             generation = self.generations.get(generation_name)
         except ProfileConfigurationError as exc:
             raise NarrationClientError(str(exc)) from exc
@@ -188,6 +248,11 @@ class NarrationService:
                 chunking_identity=self.chunker.identity,
                 request_fingerprint=fingerprint,
                 idempotency_key=idempotency_key,
+                metadata=(
+                    {"benchmark_reference": benchmark_reference}
+                    if benchmark_reference is not None
+                    else {}
+                ),
             )
             self.repository.create(job)
             try:
@@ -251,7 +316,7 @@ class NarrationService:
             return
         started = time.monotonic()
         try:
-            voice = self.voices.get(job.voice_profile)
+            voice = self._resolve_job_voice(job)
             generation = self.generations.get(job.generation_profile)
             if (
                 voice.identity != job.voice_identity
@@ -261,6 +326,7 @@ class NarrationService:
                 raise ProfileConfigurationError(
                     "persisted profile identity no longer matches configuration"
                 )
+            await self.provider.prepare_voice(voice)
             chunks = self.chunker.chunk(job.text, base_seed=job.resolved_seed)
             self.repository.mark_running(job.id, started_at=utc_now(), total_chunks=len(chunks))
             audio_chunks = []
@@ -385,6 +451,8 @@ class NarrationService:
                 "synthesis_seconds": elapsed,
                 "real_time_factor": elapsed / metrics.duration_seconds,
             }
+            if job.metadata.get("benchmark_reference") is not None:
+                metadata["benchmark_reference"] = job.metadata["benchmark_reference"]
             self.repository.mark_completed(
                 job.id,
                 completed_at=utc_now(),
@@ -455,13 +523,37 @@ class NarrationService:
             job.resolved_seed,
             category,
         )
+        persisted_metadata = dict(job.metadata)
+        if metadata is not None:
+            persisted_metadata.update(metadata)
         self.repository.mark_failed(
             job.id,
             completed_at=utc_now(),
             category=category,
             message=public_message,
-            metadata=metadata,
+            metadata=persisted_metadata or None,
         )
+
+    def _resolve_job_voice(self, job: NarrationJob) -> VoiceProfile:
+        benchmark = job.metadata.get("benchmark_reference")
+        if benchmark is None:
+            return self.voices.get(job.voice_profile)
+        if not isinstance(benchmark, dict):
+            raise ProfileConfigurationError("benchmark reference metadata is invalid")
+        reference_id = benchmark.get("reference_id")
+        if not isinstance(reference_id, str):
+            raise ProfileConfigurationError("benchmark reference metadata is incomplete")
+        voice = resolve_ephemeral_xvector_reference(
+            reference_id,
+            references_directory=self.settings.references_directory,
+            model_id=self.settings.model_id,
+            model_revision=self.settings.model_revision,
+        )
+        if voice.identity != job.voice_identity:
+            raise ProfileConfigurationError(
+                "benchmark reference identity no longer matches request"
+            )
+        return voice
 
     def _fingerprint(
         self,

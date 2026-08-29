@@ -14,7 +14,9 @@ from tests.fakes import FakeTTSProvider
 
 @pytest.fixture
 def configured_settings(tmp_path: Path) -> Settings:
-    reference = tmp_path / "reference.wav"
+    references_directory = tmp_path / "references"
+    references_directory.mkdir()
+    reference = references_directory / "reference.wav"
     transcript = tmp_path / "reference.txt"
     samples = 0.1 * np.sin(2 * np.pi * 220 * np.arange(2400) / 24000)
     sf.write(reference, samples, 24000, subtype="PCM_16")
@@ -47,6 +49,7 @@ def configured_settings(tmp_path: Path) -> Settings:
         dtype="float32",
         voice_profiles_file=voices,
         generation_profiles_file=generations,
+        references_directory=references_directory,
         default_voice_profile="test_voice",
         default_generation_profile="test_generation",
         output_directory=tmp_path / "outputs",

@@ -22,6 +22,7 @@ class Settings(BaseSettings):
 
     voice_profiles_file: Path = Path("config/voices.yaml")
     generation_profiles_file: Path = Path("config/generation_profiles.yaml")
+    references_directory: Path = Path("/data/references")
     default_voice_profile: str = "bernardo_v1"
     default_generation_profile: str = "narration_v1"
 

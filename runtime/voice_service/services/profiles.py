@@ -17,6 +17,9 @@ class ProfileConfigurationError(ValueError):
     pass
 
 
+EPHEMERAL_REFERENCE_VERSION = "benchmark_reference_v1"
+
+
 class GenerationControls(BaseModel):
     do_sample: bool = True
     temperature: float = Field(default=0.9, gt=0, le=2)
@@ -142,6 +145,46 @@ class VoiceProfileRegistry:
 
     def all(self) -> list[VoiceProfile]:
         return [self._profiles[name] for name in sorted(self._profiles)]
+
+
+def resolve_ephemeral_xvector_reference(
+    reference_id: str,
+    *,
+    references_directory: Path,
+    model_id: str,
+    model_revision: str,
+) -> VoiceProfile:
+    """Load one benchmark-only x-vector profile without mutating the registry."""
+    relative = Path(reference_id)
+    if (
+        not reference_id.strip()
+        or relative.is_absolute()
+        or "\x00" in reference_id
+        or "\\" in reference_id
+        or ".." in relative.parts
+    ):
+        raise ProfileConfigurationError("benchmark reference must be a safe relative path")
+    root = references_directory.resolve()
+    candidate = (root / relative).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError as exc:
+        raise ProfileConfigurationError(
+            "benchmark reference escapes the reference directory"
+        ) from exc
+    if candidate.suffix.casefold() != ".wav" or not candidate.is_file():
+        raise ProfileConfigurationError("benchmark reference must be an existing WAV file")
+    normalized_id = candidate.relative_to(root).as_posix()
+    return VoiceProfileRegistry._load_one(
+        f"benchmark:{normalized_id}",
+        {
+            "version": EPHEMERAL_REFERENCE_VERSION,
+            "reference_audio": str(candidate),
+            "clone_mode": "x_vector_only",
+        },
+        model_id,
+        model_revision,
+    )
 
 
 class GenerationProfileRegistry:
