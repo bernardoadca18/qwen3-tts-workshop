@@ -96,6 +96,7 @@ class NarrationOut(BaseModel):
 class VoiceOut(BaseModel):
     name: str
     version: str
+    reference_id: str
     clone_mode: str
     audio_sha256: str
     transcript_sha256: str | None
@@ -109,6 +110,7 @@ class VoiceOut(BaseModel):
         return cls(
             name=profile.name,
             version=profile.version,
+            reference_id=profile.reference_id,
             clone_mode=profile.clone_mode,
             audio_sha256=profile.audio_sha256,
             transcript_sha256=profile.transcript_sha256,

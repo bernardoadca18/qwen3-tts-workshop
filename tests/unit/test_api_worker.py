@@ -29,10 +29,24 @@ def test_live_is_available_before_readiness_and_ready_after_lifespan(app_factory
         assert ready.json()["worker_operational"] is True
         assert ready.json()["chunking_identity"]
         assert ready.json()["chunking_strategy_version"] == "qwen3-tts-chunking-v2"
+        assert ready.json()["default_voice_profile"] == {
+            "name": "test_voice",
+            "version": "1",
+            "identity": app.state.runtime.voices.get("test_voice").identity,
+            "clone_mode": "icl",
+            "reference_id": "reference.wav",
+            "reference_sha256": app.state.runtime.voices.get("test_voice").audio_sha256,
+        }
+        assert ready.json()["default_generation_profile"] == {
+            "name": "test_generation",
+            "version": "1",
+            "identity": app.state.runtime.generations.get("test_generation").identity,
+        }
         assert running.get("/health").json()["status"] == "ready"
         voices = running.get("/v1/voices").json()
         assert voices[0]["name"] == "test_voice"
         assert voices[0]["clone_mode"] == "icl"
+        assert voices[0]["reference_id"] == "reference.wav"
         assert "reference_audio" not in voices[0]
         generations = running.get("/v1/generation-profiles").json()
         assert generations == [
@@ -84,6 +98,8 @@ def test_create_status_audio_and_safe_metadata(app_factory: Callable) -> None:
         assert result["metadata"]["chunks"][0]["audio_duration_seconds"] > 0
         assert result["metadata"]["chunks"][0]["quality_guard_status"] == "passed"
         assert result["metadata"]["voice_clone_mode"] == "icl"
+        assert result["metadata"]["voice_reference_id"] == "reference.wav"
+        assert len(result["metadata"]["voice_reference_sha256"]) == 64
         assert result["metadata"]["artifact_integrity"]["status"] == "passed"
         assert result["metadata"]["assembly_timeline"]
         audio = client.get(result["audio_url"])

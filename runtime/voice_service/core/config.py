@@ -23,8 +23,8 @@ class Settings(BaseSettings):
     voice_profiles_file: Path = Path("config/voices.yaml")
     generation_profiles_file: Path = Path("config/generation_profiles.yaml")
     references_directory: Path = Path("/data/references")
-    default_voice_profile: str = "bernardo_v1"
-    default_generation_profile: str = "narration_v1"
+    default_voice_profile: str = "bernardo_xvec_v2"
+    default_generation_profile: str = "narration_v2"
 
     max_queue_size: int = Field(default=32, ge=1, le=1000)
     max_text_chars: int = Field(default=50000, ge=1)

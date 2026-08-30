@@ -59,6 +59,7 @@ class ChunkQualityMetrics:
 class VoiceProfile:
     name: str
     version: str
+    reference_id: str
     reference_audio: Path
     transcript: str | None
     clone_mode: str

@@ -232,6 +232,16 @@ class NarrationService:
             if self.queue.qsize() >= self.settings.max_queue_size:
                 raise NarrationQueueFullError("narration queue is full")
             resolved_seed = resolve_seed(requested_seed)
+            profile_metadata: dict[str, object] = {
+                "voice_profile_version": voice.version,
+                "voice_reference_id": voice.reference_id,
+                "voice_reference_sha256": voice.audio_sha256,
+                "voice_transcript_sha256": voice.transcript_sha256,
+                "voice_clone_mode": voice.clone_mode,
+                "generation_profile_version": generation.version,
+            }
+            if benchmark_reference is not None:
+                profile_metadata["benchmark_reference"] = benchmark_reference
             job = NarrationJob(
                 id=uuid4().hex,
                 text=text,
@@ -249,11 +259,7 @@ class NarrationService:
                 chunking_identity=self.chunker.identity,
                 request_fingerprint=fingerprint,
                 idempotency_key=idempotency_key,
-                metadata=(
-                    {"benchmark_reference": benchmark_reference}
-                    if benchmark_reference is not None
-                    else {}
-                ),
+                metadata=profile_metadata,
             )
             self.repository.create(job)
             try:
@@ -430,6 +436,7 @@ class NarrationService:
                 )
             elapsed = time.monotonic() - started
             metadata: dict[str, object] = {
+                **job.metadata,
                 "provider": self.provider.metadata().provider,
                 "model_id": job.model_id,
                 "model_revision": job.model_revision,
@@ -455,8 +462,6 @@ class NarrationService:
                 "synthesis_seconds": elapsed,
                 "real_time_factor": elapsed / metrics.duration_seconds,
             }
-            if job.metadata.get("benchmark_reference") is not None:
-                metadata["benchmark_reference"] = job.metadata["benchmark_reference"]
             self.repository.mark_completed(
                 job.id,
                 completed_at=utc_now(),

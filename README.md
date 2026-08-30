@@ -48,11 +48,13 @@ startup the service checks file presence, non-empty transcript, readable and
 finite non-empty audio, then records profile/version, hashes, duration, format
 and model/revision-bound identity.
 
-`bernardo_xvec_v1` is a separate opt-in profile using `x_vector_only_mode=True` and the same raw
+`bernardo_xvec_v1` is a separate historical opt-in profile using `x_vector_only_mode=True` and the same raw
 reference audio. It deliberately has no transcript: Qwen receives `ref_text=None`, discards
 reference speech codes from the prompt item and conditions on the speaker embedding only. Clone
 mode and transcript semantics participate in profile identity, so ICL and x-vector prompts cannot
-share cache entries. `bernardo_v1` is unchanged and remains the production default.
+share cache entries. `bernardo_v1` and `bernardo_xvec_v1` remain available for reproduction.
+The production default is the frozen `bernardo_xvec_v2` profile; its configured reference digest
+is verified at startup and its transcript-free x-vector semantics cannot silently fall back to ICL.
 
 The Qwen prompt is cached by this identity and is not recomputed per narration. Registered profile
 prompts are pinned for the service lifetime. Benchmark-only ephemeral prompts use a bounded LRU
@@ -64,7 +66,8 @@ returns safe metadata and never host paths.
 ## Generation profiles
 
 config/generation_profiles.yaml contains internal Qwen controls. The stable API
-selects narration_v1; it does not expose Qwen sampling vocabulary. Changing a
+selects the frozen `narration_v2`; `narration_v1` remains available for historical reproduction.
+The API does not expose Qwen sampling vocabulary. Changing a
 profile version or controls changes its identity and job provenance.
 GET /v1/generation-profiles exposes only name, version and canonical identity
 so callers can invalidate derived audio without learning provider controls.
@@ -87,6 +90,9 @@ curl http://localhost:8889/health/ready
 `/health/live` responds as soon as the event loop is serving, including while
 the model initializes. `/health/ready` returns HTTP 503 with a safe
 `initializing`/failure reason until provider, profiles and worker are usable.
+Successful `GET /v1/narrations/<job-id>` status polls are filtered from the INFO
+access log so model/chunk/guard/completion events remain visible; polling errors,
+artifact requests and health requests are still logged normally.
 
 Compose retains the Hugging Face cache, SQLite database, final outputs and
 references across rebuilds. References/config are read-only mounts; jobs and
@@ -104,9 +110,9 @@ curl -i -X POST http://localhost:8889/v1/narrations \
   -d '{
     "text": "Geralt aprende o sinal Aard.",
     "language": "Portuguese",
-    "voice_profile": "bernardo_v1",
-    "generation_profile": "narration_v1",
-    "seed": 0
+    "voice_profile": "bernardo_xvec_v2",
+    "generation_profile": "narration_v2",
+    "seed": 303
   }'
 ~~~
 
@@ -189,7 +195,9 @@ where each generated step contributes one codec frame until the codec EOS token 
 ceiling. The pinned model declares the 12 Hz tokenizer and 24 kHz output. Thus a generation near
 2048 steps is consistent with roughly the observed multi-minute ceiling, but the production audio
 does not prove why EOS was missed. `narration_v1` and its 2048-token baseline remain unchanged for
-reproducibility; the duration guard is the mandatory safety fuse at the waveform boundary.
+reproducibility; `narration_v2` changes only the frozen sampling controls documented in
+[`docs/production_voice_baseline.md`](docs/production_voice_baseline.md). The duration guard is the
+mandatory safety fuse at the waveform boundary.
 
 ## Recovery and retention
 

@@ -50,6 +50,29 @@ def _identity(payload: dict[str, Any]) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+def _reference_id(value: object, audio_path: Path) -> str:
+    reference_id = str(value or audio_path.name).strip()
+    relative = Path(reference_id)
+    if (
+        not reference_id
+        or relative.is_absolute()
+        or "\x00" in reference_id
+        or "\\" in reference_id
+        or ".." in relative.parts
+    ):
+        raise ProfileConfigurationError("voice profile reference_id must be a safe relative path")
+    return relative.as_posix()
+
+
+def _expected_reference_sha256(value: object, name: str) -> str | None:
+    if value is None:
+        return None
+    digest = str(value).strip().lower()
+    if len(digest) != 64 or any(character not in "0123456789abcdef" for character in digest):
+        raise ProfileConfigurationError(f"voice profile reference_sha256 is invalid: {name}")
+    return digest
+
+
 def _read_yaml(path: Path) -> dict[str, Any]:
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
@@ -90,6 +113,8 @@ class VoiceProfileRegistry:
         raw_text_path = config.get("reference_text")
         text_path = Path(str(raw_text_path)) if raw_text_path else None
         clone_mode = str(config.get("clone_mode", "icl")).strip()
+        reference_id = _reference_id(config.get("reference_id"), audio_path)
+        expected_audio_hash = _expected_reference_sha256(config.get("reference_sha256"), name)
         if not version or clone_mode not in {"icl", "x_vector_only"}:
             raise ProfileConfigurationError(f"invalid voice profile metadata: {name}")
         if not audio_path.is_file() or (
@@ -122,6 +147,8 @@ class VoiceProfileRegistry:
         if decoded_frames <= 0 or info.samplerate <= 0 or info.frames <= 0:
             raise ProfileConfigurationError(f"voice profile audio is empty: {name}")
         audio_hash = _sha256_file(audio_path)
+        if expected_audio_hash is not None and audio_hash != expected_audio_hash:
+            raise ProfileConfigurationError(f"voice profile reference SHA-256 mismatch: {name}")
         transcript_hash = _sha256_text(transcript) if transcript is not None else None
         identity = _identity(
             {
@@ -137,6 +164,7 @@ class VoiceProfileRegistry:
         return VoiceProfile(
             name=name,
             version=version,
+            reference_id=reference_id,
             reference_audio=audio_path,
             transcript=transcript,
             clone_mode=clone_mode,

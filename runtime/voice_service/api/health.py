@@ -20,7 +20,11 @@ async def ready(request: Request) -> dict[str, object]:
             },
         )
     assert runtime.provider is not None
+    assert runtime.voices is not None
+    assert runtime.generations is not None
     metadata = runtime.provider.metadata()
+    default_voice = runtime.voices.get(runtime.settings.default_voice_profile)
+    default_generation = runtime.generations.get(runtime.settings.default_generation_profile)
     return {
         "status": "ready",
         "provider": metadata.provider,
@@ -39,6 +43,19 @@ async def ready(request: Request) -> dict[str, object]:
         "chunking": {
             "target_chars": runtime.service.chunker.target_chars,
             "max_chars": runtime.service.chunker.max_chars,
+        },
+        "default_voice_profile": {
+            "name": default_voice.name,
+            "version": default_voice.version,
+            "identity": default_voice.identity,
+            "clone_mode": default_voice.clone_mode,
+            "reference_id": default_voice.reference_id,
+            "reference_sha256": default_voice.audio_sha256,
+        },
+        "default_generation_profile": {
+            "name": default_generation.name,
+            "version": default_generation.version,
+            "identity": default_generation.identity,
         },
     }
 

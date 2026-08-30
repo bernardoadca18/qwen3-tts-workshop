@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import soundfile as sf
+import yaml
 from voice_service.core.config import Settings
 from voice_service.services.profiles import (
     GenerationProfileRegistry,
@@ -145,3 +146,80 @@ def test_generation_profile_resolves_and_rejects_invalid(
     )
     with pytest.raises(ValueError):
         GenerationProfileRegistry.load(invalid)
+
+
+def test_frozen_production_profiles_have_expected_contract(tmp_path: Path) -> None:
+    repository = Path(__file__).resolve().parents[2]
+    raw_voices = yaml.safe_load((repository / "config" / "voices.yaml").read_text())
+    for profile in raw_voices["voice_profiles"].values():
+        profile["reference_audio"] = str(
+            repository / "data" / "references" / Path(profile["reference_audio"]).name
+        )
+        if profile.get("reference_text"):
+            profile["reference_text"] = str(
+                repository / "data" / "references" / Path(profile["reference_text"]).name
+            )
+    local_voices = tmp_path / "voices.yaml"
+    local_voices.write_text(yaml.safe_dump(raw_voices), encoding="utf-8")
+
+    settings = Settings(_env_file=None)
+    voices = VoiceProfileRegistry.load(
+        local_voices,
+        model_id=settings.model_id,
+        model_revision=settings.model_revision,
+    )
+    production_voice = voices.get(settings.default_voice_profile)
+    assert production_voice.name == "bernardo_xvec_v2"
+    assert production_voice.reference_id == "ref_full_processed_raw.wav"
+    assert production_voice.audio_sha256 == (
+        "8856924e05f76d1a3a5b8554218f80b5e1a898aebfe211ec1b65b60eabdbc70b"
+    )
+    assert production_voice.clone_mode == "x_vector_only"
+    assert production_voice.transcript is None
+    assert production_voice.transcript_sha256 is None
+    assert production_voice.identity == (
+        "c4e74a0da51bd5fbc18c4d9b0bc5623d2e4ea91ff8d873374b6c1e41632b802b"
+    )
+
+    generations = GenerationProfileRegistry.load(repository / "config/generation_profiles.yaml")
+    historical = generations.get("narration_v1")
+    production_generation = generations.get(settings.default_generation_profile)
+    assert production_generation.name == "narration_v2"
+    assert production_generation.identity != historical.identity
+    assert production_generation.identity == (
+        "e5433e1cb8b20f91913ad37763b891f3b327a50be2f5c7d09e9a5fdaa97f05d7"
+    )
+    assert production_generation.parameters == {
+        "do_sample": True,
+        "temperature": 0.95,
+        "top_p": 1.0,
+        "top_k": 50,
+        "repetition_penalty": 1.05,
+        "subtalker_dosample": True,
+        "subtalker_temperature": 0.9,
+        "subtalker_top_p": 1.0,
+        "subtalker_top_k": 50,
+        "max_new_tokens": 2048,
+    }
+
+
+def test_configured_reference_digest_mismatch_fails_closed(
+    configured_settings: Settings, tmp_path: Path
+) -> None:
+    reference = configured_settings.references_directory / "reference.wav"
+    config = tmp_path / "digest-mismatch.yaml"
+    config.write_text(
+        "voice_profiles:\n"
+        "  frozen:\n"
+        "    version: '1'\n"
+        f"    reference_audio: {reference}\n"
+        f"    reference_sha256: '{'0' * 64}'\n"
+        "    clone_mode: x_vector_only\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ProfileConfigurationError, match="SHA-256 mismatch"):
+        VoiceProfileRegistry.load(
+            config,
+            model_id=configured_settings.model_id,
+            model_revision=configured_settings.model_revision,
+        )

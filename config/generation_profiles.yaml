@@ -13,6 +13,22 @@ generation_profiles:
       subtalker_top_k: 50
       max_new_tokens: 2048
 
+  narration_v2:
+    # Production freeze (2026-08-29). narration_v1 remains available for
+    # historical reproduction; this profile intentionally has a new identity.
+    version: "2"
+    parameters:
+      do_sample: true
+      temperature: 0.95
+      top_p: 1.0
+      top_k: 50
+      repetition_penalty: 1.05
+      subtalker_dosample: true
+      subtalker_temperature: 0.9
+      subtalker_top_p: 1.0
+      subtalker_top_k: 50
+      max_new_tokens: 2048
+
   narration_temp080:
     version: "1"
     parameters:

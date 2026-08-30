@@ -61,6 +61,7 @@ def _voice(
     return VoiceProfile(
         name=name,
         version="1",
+        reference_id="reference.wav",
         reference_audio=Path("/reference.wav"),
         transcript=transcript,
         clone_mode=mode,
