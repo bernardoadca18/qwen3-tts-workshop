@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import numpy as np
 from pydantic import BaseModel, Field
 
 from voice_service.domain import GenerationProfile, NarrationJob, VoiceProfile
@@ -140,3 +141,22 @@ class LegacyGenerateRequest(BaseModel):
     top_k: int = 50
     repetition_penalty: float = 1.05
     max_new_tokens: int = 2048
+
+
+class SpeakerEmbeddingOut(BaseModel):
+    """Speaker embedding extracted from audio."""
+
+    dimension: int
+    sample_rate: int
+    extraction_method: str = "qwen_ecapa_tdnn"
+    embedding: list[float]
+
+    @classmethod
+    def from_numpy(
+        cls, embedding: np.ndarray, sample_rate: int
+    ) -> "SpeakerEmbeddingOut":
+        return cls(
+            dimension=len(embedding),
+            sample_rate=sample_rate,
+            embedding=embedding.tolist(),
+        )

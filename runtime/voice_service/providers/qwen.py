@@ -37,6 +37,8 @@ class QwenTTSProvider:
         self._initialized = False
         self._cuda_available: bool | None = None
         self._snapshot_path: str | None = None
+        # Reference speaker embeddings cache keyed by voice profile identity.
+        self._reference_embeddings: dict[str, np.ndarray] = {}
 
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize_sync)
@@ -200,6 +202,7 @@ class QwenTTSProvider:
                 "hits": self._prompt_cache_hits,
                 "misses": self._prompt_cache_misses,
                 "evictions": self._prompt_cache_evictions,
+                "reference_embedding_entries": len(self._reference_embeddings),
                 "estimated_bytes": None,
                 "memory_measurement": "unavailable_without_tensor_introspection",
             }
@@ -249,6 +252,7 @@ class QwenTTSProvider:
             self._voice_prompts.clear()
             self._ephemeral_voice_prompts.clear()
             self._active_prompt_references.clear()
+            self._reference_embeddings.clear()
         self._model = None
         self._torch = None
         self._initialized = False
@@ -256,3 +260,95 @@ class QwenTTSProvider:
     def _require_initialized(self) -> None:
         if not self._initialized or self._model is None:
             raise ProviderError("provider is not initialized")
+
+    def extract_speaker_embedding(
+        self,
+        audio: np.ndarray,
+        sample_rate: int,
+    ) -> np.ndarray:
+        """Extract speaker embedding from audio using Qwen's internal ECAPA-TDNN.
+
+        Args:
+            audio: Mono audio samples as float32 numpy array.
+            sample_rate: Sample rate of the audio.
+
+        Returns:
+            Speaker embedding as float32 numpy array (dimension: 2048).
+
+        Raises:
+            ProviderError: If provider is not initialized or extraction fails.
+        """
+        self._require_initialized()
+        assert self._model is not None
+        import librosa
+
+        # Qwen's speaker encoder requires 24kHz
+        target_sr = 24000
+        if sample_rate != target_sr:
+            audio = librosa.resample(
+                audio.astype(np.float32),
+                orig_sr=sample_rate,
+                target_sr=target_sr,
+            )
+
+        # Extract embedding using the underlying model's speaker encoder
+        try:
+            with self._inference_lock:
+                embedding_tensor = self._model.model.extract_speaker_embedding(
+                    audio, target_sr
+                )
+                return embedding_tensor.cpu().numpy()
+        except Exception as exc:
+            raise ProviderError("speaker embedding extraction failed") from exc
+
+    def get_reference_embedding(
+        self,
+        voice_profile: VoiceProfile,
+    ) -> np.ndarray:
+        """Get or extract reference speaker embedding for a voice profile.
+
+        Caches the embedding by voice profile identity to avoid re-extracting
+        on every chunk. The cache is invalidated when the profile changes.
+
+        Args:
+            voice_profile: Voice profile with reference audio.
+
+        Returns:
+            Reference speaker embedding as float32 numpy array (dimension: 2048).
+        """
+        # Check cache first
+        with self._prompt_cache_lock:
+            cached = self._reference_embeddings.get(voice_profile.identity)
+            if cached is not None:
+                return cached
+
+        # Extract from reference audio
+        import librosa
+
+        ref_audio, ref_sr = librosa.load(
+            str(voice_profile.reference_audio),
+            sr=None,
+            mono=True,
+        )
+
+        embedding = self.extract_speaker_embedding(ref_audio, ref_sr)
+
+        # Cache it
+        with self._prompt_cache_lock:
+            self._reference_embeddings[voice_profile.identity] = embedding
+
+        logger.info(
+            "reference embedding cached profile=%s identity=%s",
+            voice_profile.name,
+            voice_profile.identity,
+        )
+
+        return embedding
+
+    def clear_reference_embedding(self, identity: str) -> None:
+        """Clear cached reference embedding for a voice profile identity.
+
+        Call this when the voice profile changes or is deleted.
+        """
+        with self._prompt_cache_lock:
+            self._reference_embeddings.pop(identity, None)

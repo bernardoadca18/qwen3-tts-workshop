@@ -27,6 +27,66 @@ class ChunkQualityGuardError(AudioValidationError):
         self.diagnostics: dict[str, object] = {}
 
 
+class SpeakerSimilarityGuardError(AudioValidationError):
+    """Raised when generated audio fails speaker similarity validation."""
+
+    def __init__(
+        self,
+        similarity: float,
+        threshold: float,
+        reference_identity: str,
+    ):
+        super().__init__(
+            f"speaker similarity {similarity:.4f} below threshold {threshold:.4f} "
+            f"for voice identity {reference_identity}"
+        )
+        self.similarity = similarity
+        self.threshold = threshold
+        self.reference_identity = reference_identity
+        self.diagnostics: dict[str, object] = {}
+
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+    """Compute cosine similarity between two vectors."""
+    norm_a = np.linalg.norm(a)
+    norm_b = np.linalg.norm(b)
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return float(np.dot(a, b) / (norm_a * norm_b))
+
+
+def validate_speaker_similarity(
+    generated_embedding: np.ndarray,
+    reference_embedding: np.ndarray,
+    threshold: float,
+    reference_identity: str,
+) -> float:
+    """Validate speaker similarity between generated and reference embeddings.
+
+    Args:
+        generated_embedding: Speaker embedding from generated audio.
+        reference_embedding: Speaker embedding from reference voice profile.
+        threshold: Minimum cosine similarity required (0.0 to 1.0).
+        reference_identity: Identity hash of the voice profile for diagnostics.
+
+    Returns:
+        The computed similarity score.
+
+    Raises:
+        SpeakerSimilarityGuardError: If similarity is below threshold.
+    """
+    similarity = cosine_similarity(generated_embedding, reference_embedding)
+
+    if similarity < threshold:
+        raise SpeakerSimilarityGuardError(
+            similarity=similarity,
+            threshold=threshold,
+            reference_identity=reference_identity,
+        )
+
+    return similarity
+
+
 @dataclass(frozen=True)
 class AudioAssemblyResult:
     audio: AudioChunk

@@ -7,6 +7,11 @@ This script measures speaker embedding similarity between:
 
 Purpose: Derive speaker similarity threshold from real measurements.
 
+The script uses the running Qwen voice service for BOTH generation and
+speaker embedding extraction via the /v1/speaker-embeddings endpoint. It does
+NOT load a second model — it reuses the service's already-loaded ECAPA-TDNN
+speaker encoder over HTTP.
+
 Usage:
     # Dry-run (plan only)
     python scripts/benchmark_speaker_similarity.py --text "Teste de áudio" --output /data/audio/benchmarks/speaker-similarity
@@ -16,6 +21,12 @@ Usage:
 
     # With suspected bad seeds
     python scripts/benchmark_speaker_similarity.py --run --text "Teste de áudio" --bad-seeds 61 101 --output /data/audio/benchmarks/speaker-similarity
+
+    # With existing WAV files (no generation needed for those categories)
+    python scripts/benchmark_speaker_similarity.py --run --text "Teste de áudio" \
+        --good-wav /data/good1.wav /data/good2.wav \
+        --bad-wav /data/bad1.wav \
+        --output /data/audio/benchmarks/speaker-similarity
 """
 from __future__ import annotations
 
@@ -25,8 +36,11 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import urllib.request
+import urllib.error
+
 import numpy as np
-import torch
+import soundfile as sf
 
 
 @dataclass(frozen=True)
@@ -48,69 +62,103 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (norm_a * norm_b))
 
 
-def extract_speaker_embedding_from_model(
-    model: torch.nn.Module,
+def extract_speaker_embedding_via_api(
+    base_url: str,
     audio_path: str,
-    target_sr: int = 24000,
+    *,
+    timeout: float = 120.0,
 ) -> SpeakerEmbedding:
-    """Extract speaker embedding from audio using Qwen's internal ECAPA-TDNN.
+    """Extract speaker embedding from audio using the service /v1/speaker-embeddings API.
 
-    Args:
-        model: Qwen3TTSForConditionalGeneration model instance
-        audio_path: Path to audio file (WAV)
-        target_sr: Target sample rate (Qwen expects 24kHz)
-
-    Returns:
-        SpeakerEmbedding with extracted vector and metadata
+    This reuses the already-loaded Qwen model inside the running voice service —
+    no second model is loaded.
     """
-    import librosa
-    import soundfile as sf
+    import email.generator
+    import email.message
+    import io
 
-    # Load audio
-    audio, sr = sf.read(audio_path)
+    boundary = "----WebKitFormBoundarySpeakerEmbed"
+    with open(audio_path, "rb") as f:
+        audio_bytes = f.read()
 
-    # Convert to mono if stereo
-    if len(audio.shape) > 1:
-        audio = audio.mean(axis=1)
+    # Build multipart/form-data body
+    body = io.BytesIO()
+    body.write(f"--{boundary}\r\n".encode())
+    body.write(f'Content-Disposition: form-data; name="audio"; filename="{Path(audio_path).name}"\r\n'.encode())
+    body.write(b"Content-Type: audio/wav\r\n\r\n")
+    body.write(audio_bytes)
+    body.write(f"\r\n--{boundary}--\r\n".encode())
 
-    # Resample to 24kHz if needed
-    if sr != target_sr:
-        audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
-        sr = target_sr
-
-    # Ensure float32
-    audio = audio.astype(np.float32)
-
-    # Extract embedding using Qwen's internal speaker encoder
-    with torch.inference_mode():
-        # Call extract_speaker_embedding(audio, sr)
-        # The model expects numpy array and sample rate
-        embedding_tensor = model.extract_speaker_embedding(audio, sr)
-        embedding = embedding_tensor.cpu().numpy()
-
-    return SpeakerEmbedding(
-        vector=embedding,
-        source_path=str(audio_path),
-        sample_rate=sr,
-        extraction_method="qwen_ecapa_tdnn",
-        dimension=len(embedding),
+    req = urllib.request.Request(
+        f"{base_url}/v1/speaker-embeddings",
+        data=body.getvalue(),
+        method="POST",
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
     )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        payload = json.loads(resp.read().decode())
+
+    vector = np.asarray(payload["embedding"], dtype=np.float32)
+    return SpeakerEmbedding(
+        vector=vector,
+        source_path=str(audio_path),
+        sample_rate=int(payload["sample_rate"]),
+        extraction_method=payload.get("extraction_method", "qwen_ecapa_tdnn"),
+        dimension=int(payload["dimension"]),
+    )
+
+
+def load_embedding_from_file(path: Path) -> np.ndarray:
+    """Load a previously-saved reference embedding JSON."""
+    data = json.loads(path.read_text())
+    return np.asarray(data["vector"], dtype=np.float32)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Speaker similarity calibration benchmark")
     parser.add_argument("--base-url", default="http://localhost:8889", help="Qwen voice service URL")
     parser.add_argument("--voice", default="bernardo_xvec_v2", help="Voice profile name")
-    parser.add_argument("--generation", default="narration_v1", help="Generation profile name")
+    parser.add_argument("--generation", default="narration_v2", help="Generation profile name")
     parser.add_argument("--text", required=True, help="Text to synthesize")
     parser.add_argument("--seed", type=int, default=303, help="Primary seed (known GOOD)")
     parser.add_argument("--good-seeds", nargs="+", type=int, default=[303], help="Known GOOD seeds")
     parser.add_argument("--bad-seeds", nargs="+", type=int, default=[], help="Suspected BAD seeds")
-    parser.add_argument("--reference-audio", type=Path, help="Reference audio path (defaults to voice profile reference)")
-    parser.add_argument("--output", type=Path, default=Path("/data/audio/benchmarks/speaker-similarity"), help="Output directory")
+    parser.add_argument(
+        "--good-wav",
+        nargs="+",
+        type=Path,
+        default=[],
+        help="Existing GOOD WAV files to use instead of generating good seeds",
+    )
+    parser.add_argument(
+        "--bad-wav",
+        nargs="+",
+        type=Path,
+        default=[],
+        help="Existing BAD WAV files to use instead of generating bad seeds",
+    )
+    parser.add_argument(
+        "--reference-audio",
+        type=Path,
+        help="Reference audio path (defaults to voice profile reference)",
+    )
+    parser.add_argument(
+        "--reference-embedding",
+        type=Path,
+        help="Pre-extracted reference embedding JSON (skips reference extraction)",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path("/data/audio/benchmarks/speaker-similarity"),
+        help="Output directory",
+    )
     parser.add_argument("--run", action="store_true", help="Execute benchmark (default is dry-run)")
     parser.add_argument("--repetitions", type=int, default=1, help="Repetitions per seed")
     args = parser.parse_args()
+
+    has_good = bool(args.good_seeds or args.good_wav)
+    has_bad = bool(args.bad_seeds or args.bad_wav)
 
     # Plan mode
     if not args.run:
@@ -121,123 +169,146 @@ def main() -> None:
             "text_length": len(args.text),
             "good_seeds": args.good_seeds,
             "bad_seeds": args.bad_seeds,
+            "good_wav": [str(p) for p in args.good_wav],
+            "bad_wav": [str(p) for p in args.bad_wav],
             "repetitions": args.repetitions,
             "total_generations": (len(args.good_seeds) + len(args.bad_seeds)) * args.repetitions,
+            "total_wav_files": len(args.good_wav) + len(args.bad_wav),
             "output": str(args.output),
+            "embedding_source": "service_api",
             "note": "Add --run to execute benchmark. Requires Qwen service running.",
         }
         print(json.dumps(plan, indent=2, sort_keys=True))
         return
 
-    # Execute benchmark
     args.output.mkdir(parents=True, exist_ok=True)
 
-    # Import Qwen model
-    print("Loading Qwen model...")
-    from qwen_tts import Qwen3TTSModel
-
-    # Load model from HuggingFace (uses cached version if available)
-    # Production config: MODEL_ID=Qwen/Qwen3-TTS-12Hz-1.7B-Base
-    # MODEL_REVISION=fd4b254389122332181a7c3db7f27e918eec64e3
-    model = Qwen3TTSModel.from_pretrained(
-        "Qwen/Qwen3-TTS-12Hz-1.7B-Base",
-        revision="fd4b254389122332181a7c3db7f27e918eec64e3",
-        device_map="auto",
-        dtype=torch.float16,
-    )
-    print(f"  Speaker encoder sample rate: {model.model.speaker_encoder_sample_rate}")
-    print(f"  Expected embedding dimension: 2048")
-
-    # Find reference audio
-    if args.reference_audio:
-        ref_path = args.reference_audio
+    # Resolve reference embedding
+    if args.reference_embedding:
+        print(f"Loading reference embedding from {args.reference_embedding}...")
+        ref_vector = load_embedding_from_file(args.reference_embedding)
+        ref_path = args.reference_embedding
+        ref_sample_rate = None
+        ref_extraction_method = "qwen_ecapa_tdnn"
     else:
-        # Default to production reference
-        ref_path = Path("/data/references/ref_full_processed_raw.wav")
+        if args.reference_audio:
+            ref_path = args.reference_audio
+        else:
+            ref_path = Path("/data/references/ref_full_processed_raw.wav")
+        if not ref_path.exists():
+            raise FileNotFoundError(f"Reference audio not found: {ref_path}")
+        print(f"Extracting reference embedding from {ref_path} via service API...")
+        ref_embedding = extract_speaker_embedding_via_api(args.base_url, str(ref_path))
+        ref_vector = ref_embedding.vector
+        ref_sample_rate = ref_embedding.sample_rate
+        ref_extraction_method = ref_embedding.extraction_method
+        print(f"  Dimension: {ref_embedding.dimension}")
 
-    print(f"Extracting reference embedding from {ref_path}...")
-    ref_embedding = extract_speaker_embedding_from_model(model.model, str(ref_path))
-    print(f"  Dimension: {ref_embedding.dimension}")
-
-    # Store reference embedding
+    # Persist reference embedding for reuse
     ref_embedding_path = args.output / "reference_embedding.json"
     ref_embedding_path.write_text(json.dumps({
-        "vector": ref_embedding.vector.tolist(),
-        "source_path": ref_embedding.source_path,
-        "sample_rate": ref_embedding.sample_rate,
-        "extraction_method": ref_embedding.extraction_method,
-        "dimension": ref_embedding.dimension,
+        "vector": ref_vector.tolist(),
+        "source_path": str(ref_path),
+        "sample_rate": ref_sample_rate,
+        "extraction_method": ref_extraction_method,
+        "dimension": int(len(ref_vector)),
     }, indent=2))
 
-    # Generate test samples and compute similarities
+    # Import wait_job helper
+    from benchmark_generation import wait_job
+
     results = []
 
-    all_seeds = [(s, "good") for s in args.good_seeds] + [(s, "bad") for s in args.bad_seeds]
+    def process_existing_wav(wav_path: Path, category: str) -> None:
+        print(f"Processing existing {category} WAV: {wav_path}...")
+        if not wav_path.exists():
+            print(f"  SKIP: file not found")
+            return
+        emb = extract_speaker_embedding_via_api(args.base_url, str(wav_path))
+        similarity = cosine_similarity(ref_vector, emb.vector)
+        print(f"  Similarity: {similarity:.6f}")
+        results.append({
+            "seed": None,
+            "category": category,
+            "repetition": 0,
+            "status": "completed",
+            "audio_path": str(wav_path),
+            "similarity": similarity,
+            "embedding_dimension": emb.dimension,
+            "source": "existing_wav",
+        })
 
-    for seed, category in all_seeds:
-        for rep in range(args.repetitions):
-            print(f"Generating seed={seed} category={category} rep={rep+1}/{args.repetitions}...")
+    def process_generated_seed(seed: int, category: str, rep: int) -> None:
+        print(f"Generating seed={seed} category={category} rep={rep+1}/{args.repetitions}...")
+        started = time.monotonic()
 
-            # Generate audio via API
-            import httpx
-            from benchmark_generation import wait_job
+        # Create narration job
+        req = urllib.request.Request(
+            f"{args.base_url}/v1/narrations",
+            data=json.dumps({
+                "text": args.text,
+                "voice_profile": args.voice,
+                "generation_profile": args.generation,
+                "seed": seed,
+            }).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            job = json.loads(resp.read().decode())
 
-            started = time.monotonic()
-            response = httpx.post(
-                f"{args.base_url}/v1/narrations",
-                json={
-                    "text": args.text,
-                    "voice_profile": args.voice,
-                    "generation_profile": args.generation,
-                    "seed": seed,
-                },
-                timeout=300,
-            )
-            response.raise_for_status()
-            job = response.json()
+        result = wait_job(args.base_url, job["id"])
+        elapsed = time.monotonic() - started
 
-            result = wait_job(args.base_url, job["id"])
-            elapsed = time.monotonic() - started
-
-            if result["status"] != "completed":
-                print(f"  FAILED: {result.get('error_message')}")
-                results.append({
-                    "seed": seed,
-                    "category": category,
-                    "repetition": rep,
-                    "status": "failed",
-                    "error": result.get("error_message"),
-                    "elapsed_seconds": elapsed,
-                })
-                continue
-
-            # Download generated audio
-            audio_path = args.output / f"seed_{seed}_rep_{rep}.wav"
-            audio_url = f"{args.base_url}{result['audio_url']}"
-            audio_response = httpx.get(audio_url, timeout=60)
-            audio_response.raise_for_status()
-            audio_path.write_bytes(audio_response.content)
-
-            # Extract speaker embedding
-            print(f"  Extracting embedding...")
-            gen_embedding = extract_speaker_embedding_from_model(model.model, str(audio_path))
-
-            # Compute similarity
-            similarity = cosine_similarity(ref_embedding.vector, gen_embedding.vector)
-            print(f"  Similarity: {similarity:.6f}")
-
+        if result["status"] != "completed":
+            print(f"  FAILED: {result.get('error_message')}")
             results.append({
                 "seed": seed,
                 "category": category,
                 "repetition": rep,
-                "status": "completed",
+                "status": "failed",
+                "error": result.get("error_message"),
                 "elapsed_seconds": elapsed,
-                "audio_path": str(audio_path),
-                "similarity": similarity,
-                "embedding_dimension": gen_embedding.dimension,
-                "duration_seconds": result.get("result_duration_seconds"),
-                "sha256": result.get("result_sha256"),
             })
+            return
+
+        audio_path = args.output / f"seed_{seed}_rep_{rep}.wav"
+        audio_url = f"{args.base_url}{result['audio_url']}"
+        with urllib.request.urlopen(audio_url, timeout=60) as resp:
+            audio_path.write_bytes(resp.read())
+
+        print(f"  Extracting embedding via service API...")
+        emb = extract_speaker_embedding_via_api(args.base_url, str(audio_path))
+        similarity = cosine_similarity(ref_vector, emb.vector)
+        print(f"  Similarity: {similarity:.6f}")
+
+        results.append({
+            "seed": seed,
+            "category": category,
+            "repetition": rep,
+            "status": "completed",
+            "elapsed_seconds": elapsed,
+            "audio_path": str(audio_path),
+            "similarity": similarity,
+            "embedding_dimension": emb.dimension,
+            "duration_seconds": result.get("result_duration_seconds"),
+            "sha256": result.get("result_sha256"),
+            "source": "generated",
+        })
+
+    # Existing WAV files
+    for wav_path in args.good_wav:
+        process_existing_wav(wav_path, "good")
+    for wav_path in args.bad_wav:
+        process_existing_wav(wav_path, "bad")
+
+    # Generated seeds
+    for seed in args.good_seeds:
+        for rep in range(args.repetitions):
+            process_generated_seed(seed, "good", rep)
+    for seed in args.bad_seeds:
+        for rep in range(args.repetitions):
+            process_generated_seed(seed, "bad", rep)
 
     # Analyze results
     good_similarities = [r["similarity"] for r in results if r["category"] == "good" and "similarity" in r]
@@ -247,9 +318,11 @@ def main() -> None:
         "schema": "neovids_speaker_similarity_calibration_v1",
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "voice": args.voice,
+        "generation": args.generation,
         "reference_audio": str(ref_path),
-        "reference_embedding_dimension": ref_embedding.dimension,
+        "reference_embedding_dimension": int(len(ref_vector)),
         "extraction_method": "qwen_ecapa_tdnn",
+        "embedding_source": "service_api",
         "text_length": len(args.text),
         "results": results,
         "analysis": {
@@ -272,12 +345,10 @@ def main() -> None:
 
     # Compute recommended threshold if we have both good and bad
     if good_similarities and bad_similarities:
-        # Threshold: midpoint between min_good and max_bad
         min_good = min(good_similarities)
         max_bad = max(bad_similarities)
 
         if min_good > max_bad:
-            # Clear separation
             threshold = (min_good + max_bad) / 2
             analysis["analysis"]["threshold_recommendation"] = {
                 "value": threshold,
@@ -287,7 +358,6 @@ def main() -> None:
                 "max_bad": max_bad,
             }
         else:
-            # Overlapping distributions - use conservative threshold
             threshold = min_good
             analysis["analysis"]["threshold_recommendation"] = {
                 "value": threshold,
@@ -298,7 +368,6 @@ def main() -> None:
                 "warning": "Distributions overlap - manual review recommended",
             }
     elif good_similarities:
-        # Only good samples - use conservative threshold
         threshold = min(good_similarities)
         analysis["analysis"]["threshold_recommendation"] = {
             "value": threshold,
@@ -313,7 +382,6 @@ def main() -> None:
             "warning": "No good samples collected",
         }
 
-    # Write results
     manifest_path = args.output / "manifest.json"
     manifest_path.write_text(json.dumps(analysis, indent=2))
     print()

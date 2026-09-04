@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Header, HTTPException, Request, status
+import numpy as np
+import soundfile as sf
+from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 
 from voice_service.api.schemas import (
@@ -11,6 +13,7 @@ from voice_service.api.schemas import (
     LegacyGenerateRequest,
     NarrationCreate,
     NarrationOut,
+    SpeakerEmbeddingOut,
     VoiceOut,
 )
 from voice_service.domain import JobStatus
@@ -200,3 +203,50 @@ async def legacy_generate(payload: LegacyGenerateRequest, request: Request) -> F
             "Link": '</v1/narrations>; rel="successor-version"',
         },
     )
+
+
+@router.post(
+    "/v1/speaker-embeddings",
+    response_model=SpeakerEmbeddingOut,
+    status_code=status.HTTP_200_OK,
+    tags=["speaker-embeddings"],
+)
+async def extract_speaker_embedding(
+    audio: UploadFile = File(..., description="Audio file (WAV) to extract speaker embedding from"),
+    request: Request = None,
+) -> SpeakerEmbeddingOut:
+    """Extract speaker embedding from uploaded audio using Qwen's ECAPA-TDNN encoder.
+
+    The audio is automatically resampled to 24kHz if needed.
+    Returns a 2048-dimensional speaker embedding vector.
+    """
+    service = _service(request)
+
+    # Read uploaded audio
+    audio_bytes = await audio.read()
+    import tempfile
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
+        tmp.write(audio_bytes)
+        tmp.flush()
+
+        # Load audio
+        wav, sr = sf.read(tmp.name)
+
+        # Convert to mono if stereo
+        if len(wav.shape) > 1:
+            wav = wav.mean(axis=1)
+
+        # Ensure float32
+        wav = wav.astype(np.float32)
+
+    # Extract embedding via provider
+    try:
+        embedding = service.provider.extract_speaker_embedding(wav, sr)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"speaker embedding extraction failed: {exc}",
+        ) from exc
+
+    return SpeakerEmbeddingOut.from_numpy(embedding, sr)
