@@ -392,6 +392,15 @@ class NarrationService:
                     exc.diagnostics = rejected
                     raise
                 signal_diagnostics = analyze_audio_chunk_signal(audio)
+
+                # Persist chunk WAV with stable identity
+                chunk_uri, chunk_metrics = await asyncio.to_thread(
+                    self.publisher.publish_chunk,
+                    job.id,
+                    chunk.index,
+                    audio,
+                )
+
                 await asyncio.to_thread(
                     stream.append,
                     chunk,
@@ -405,6 +414,13 @@ class NarrationService:
                         "end_char": chunk.end_char,
                         "boundary": chunk.boundary,
                         "seed": chunk.seed,
+                        "text": chunk.text,
+                        "synthesis_text": chunk.text,
+                        "chunk_uri": chunk_uri,
+                        "chunk_duration_seconds": chunk_metrics.duration_seconds,
+                        "chunk_byte_size": chunk_metrics.byte_size,
+                        "chunk_sha256": chunk_metrics.sha256,
+                        "chunk_sample_rate": chunk_metrics.sample_rate,
                         "text_length_chars": quality.text_length_chars,
                         "audio_duration_seconds": quality.audio_duration_seconds,
                         "synthesis_seconds": synthesis_seconds,

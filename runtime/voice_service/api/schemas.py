@@ -160,3 +160,49 @@ class SpeakerEmbeddingOut(BaseModel):
             sample_rate=sample_rate,
             embedding=embedding.tolist(),
         )
+
+
+class ChunkArtifactOut(BaseModel):
+    """Persisted chunk artifact with stable identity."""
+
+    chunk_id: str
+    job_id: str
+    chunk_index: int
+    text: str
+    synthesis_text: str
+    seed: int
+    duration_seconds: float
+    sample_rate: int
+    byte_size: int
+    sha256: str
+    frame_count: int
+    status: str
+    created_at: str
+    take_number: int
+    audio_url: str
+
+
+class ChunkRegenerateRequest(BaseModel):
+    """Request to regenerate a single chunk with a new seed."""
+
+    seed: int = Field(ge=0, le=2**31 - 1)
+
+
+class ChunkRegenerateOut(BaseModel):
+    """Response from regenerating a single chunk."""
+
+    chunk_id: str
+    job_id: str
+    chunk_index: int
+    text: str
+    synthesis_text: str
+    seed: int
+    duration_seconds: float
+    sample_rate: int
+    byte_size: int
+    sha256: str
+    frame_count: int
+    status: str
+    created_at: str
+    take_number: int
+    audio_url: str

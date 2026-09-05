@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated, cast
 
 import numpy as np
@@ -9,6 +10,9 @@ from fastapi.responses import FileResponse
 
 from voice_service.api.schemas import (
     BenchmarkNarrationCreate,
+    ChunkArtifactOut,
+    ChunkRegenerateOut,
+    ChunkRegenerateRequest,
     GenerationProfileOut,
     LegacyGenerateRequest,
     NarrationCreate,
@@ -250,3 +254,183 @@ async def extract_speaker_embedding(
         ) from exc
 
     return SpeakerEmbeddingOut.from_numpy(embedding, sr)
+
+
+@router.get(
+    "/v1/narrations/{job_id}/chunks",
+    response_model=list[ChunkArtifactOut],
+    tags=["narrations"],
+)
+async def list_job_chunks(
+    job_id: str,
+    request: Request,
+) -> list[ChunkArtifactOut]:
+    """List all persisted chunk artifacts for a narration job."""
+    service = _service(request)
+    job = service.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="job not completed")
+
+    chunks_metadata = job.metadata.get("chunks", [])
+    if not chunks_metadata:
+        return []
+
+    chunks_out = []
+    for chunk_meta in chunks_metadata:
+        chunk_index = chunk_meta["index"]
+        chunk_id = f"{job_id}_{chunk_index:04d}"
+        chunk_path = service.publisher.chunk_path_for(job_id, chunk_index)
+
+        if not chunk_path.exists():
+            continue
+
+        chunks_out.append(
+            ChunkArtifactOut(
+                chunk_id=chunk_id,
+                job_id=job_id,
+                chunk_index=chunk_index,
+                text=chunk_meta.get("text", ""),
+                synthesis_text=chunk_meta.get("synthesis_text", ""),
+                seed=chunk_meta["seed"],
+                duration_seconds=chunk_meta.get("chunk_duration_seconds", chunk_meta.get("audio_duration_seconds", 0.0)),
+                sample_rate=chunk_meta.get("chunk_sample_rate", 24000),
+                byte_size=chunk_meta.get("chunk_byte_size", 0),
+                sha256=chunk_meta.get("chunk_sha256", ""),
+                frame_count=int(chunk_meta.get("chunk_duration_seconds", 0) * chunk_meta.get("chunk_sample_rate", 24000)),
+                status="active",
+                created_at=job.completed_at or job.created_at,
+                take_number=1,
+                audio_url=f"/v1/narrations/{job_id}/chunks/{chunk_index}/audio",
+            )
+        )
+
+    return chunks_out
+
+
+@router.get(
+    "/v1/narrations/{job_id}/chunks/{chunk_index}/audio",
+    response_class=FileResponse,
+    tags=["narrations"],
+)
+async def get_chunk_audio(
+    job_id: str,
+    chunk_index: int,
+    request: Request,
+) -> FileResponse:
+    """Download a specific chunk's WAV audio file."""
+    service = _service(request)
+    job = service.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="job not completed")
+
+    chunk_path = service.publisher.chunk_path_for(job_id, chunk_index)
+    if not chunk_path.exists():
+        raise HTTPException(status_code=404, detail="chunk not found")
+
+    return FileResponse(
+        path=chunk_path,
+        media_type="audio/wav",
+        filename=f"{job_id}_chunk_{chunk_index:04d}.wav",
+        content_disposition_type="inline",
+    )
+
+
+@router.post(
+    "/v1/narrations/{job_id}/chunks/{chunk_index}/regenerate",
+    response_model=ChunkRegenerateOut,
+    status_code=status.HTTP_200_OK,
+    tags=["narrations"],
+)
+async def regenerate_chunk(
+    job_id: str,
+    chunk_index: int,
+    payload: ChunkRegenerateRequest,
+    request: Request,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
+) -> ChunkRegenerateOut:
+    """Regenerate a single chunk with a new seed.
+
+    This endpoint creates a new candidate take for the specified chunk using the
+    frozen synthesis text snapshot and the provided seed. The candidate is NOT
+    automatically promoted - the caller must decide whether to use it.
+    """
+    import time
+
+    service = _service(request)
+    job = service.jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job not found")
+
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail="job not completed")
+
+    chunks_metadata = job.metadata.get("chunks", [])
+    if not chunks_metadata:
+        raise HTTPException(status_code=404, detail="job has no chunks")
+
+    chunk_meta = None
+    for cm in chunks_metadata:
+        if cm["index"] == chunk_index:
+            chunk_meta = cm
+            break
+
+    if chunk_meta is None:
+        raise HTTPException(status_code=404, detail="chunk not found")
+
+    # Get frozen synthesis text
+    synthesis_text = chunk_meta.get("synthesis_text", chunk_meta.get("text", ""))
+
+    # Regenerate with new seed
+    try:
+        audio = await service.provider.generate(
+            text=synthesis_text,
+            speaker=service.provider.speaker,
+            seed=payload.seed,
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"chunk regeneration failed: {exc}",
+        ) from exc
+
+    # Persist the candidate chunk
+    created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    chunk_uri, chunk_metrics = await asyncio.to_thread(
+        service.publisher.publish_chunk,
+        job_id,
+        chunk_index,
+        audio,
+    )
+
+    # Determine take number (count existing chunks at this index)
+    chunk_dir = service.publisher.output_directory / "chunks" / job_id
+    take_number = 1
+    if chunk_dir.exists():
+        existing = list(chunk_dir.glob(f"chunk_{chunk_index:04d}_take_*.wav"))
+        take_number = len(existing) + 2  # +1 for original, +1 for next
+
+    chunk_id = f"{job_id}_{chunk_index:04d}_take_{take_number}"
+
+    return ChunkRegenerateOut(
+        chunk_id=chunk_id,
+        job_id=job_id,
+        chunk_index=chunk_index,
+        text=chunk_meta.get("text", ""),
+        synthesis_text=synthesis_text,
+        seed=payload.seed,
+        duration_seconds=chunk_metrics.duration_seconds,
+        sample_rate=chunk_metrics.sample_rate,
+        byte_size=chunk_metrics.byte_size,
+        sha256=chunk_metrics.sha256,
+        frame_count=chunk_metrics.frame_count,
+        status="candidate",
+        created_at=created_at,
+        take_number=take_number,
+        audio_url=f"/v1/narrations/{job_id}/chunks/{chunk_index}/audio?take={take_number}",
+    )

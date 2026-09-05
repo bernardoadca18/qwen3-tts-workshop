@@ -80,6 +80,25 @@ class GenerationProfile:
     identity: str
 
 
+@dataclass(frozen=True)
+class ChunkArtifact:
+    """Persisted chunk WAV artifact with stable identity."""
+    chunk_id: str  # {job_id}_{chunk_index}
+    job_id: str
+    chunk_index: int
+    text: str  # Canonical text (from TextChunk)
+    synthesis_text: str  # Text sent to provider (same as text for now)
+    seed: int
+    duration_seconds: float
+    sample_rate: int
+    byte_size: int
+    sha256: str
+    frame_count: int
+    status: str  # "active" | "candidate" | "superseded" | "rejected" | "failed"
+    created_at: str
+    take_number: int = 1  # 1 = initial take, 2+ = regeneration candidates
+
+
 @dataclass
 class NarrationJob:
     id: str

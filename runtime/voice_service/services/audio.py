@@ -411,6 +411,43 @@ class AtomicWavPublisher:
             raise ValueError("invalid job id")
         return self.output_directory / f"{job_id}.wav"
 
+    def chunk_path_for(self, job_id: str, chunk_index: int) -> Path:
+        """Path for a persisted chunk WAV file with stable identity."""
+        if len(job_id) != 32 or any(char not in "0123456789abcdef" for char in job_id):
+            raise ValueError("invalid job id")
+        if chunk_index < 0:
+            raise ValueError("invalid chunk index")
+        return self.output_directory / "chunks" / job_id / f"chunk_{chunk_index:04d}.wav"
+
+    def publish_chunk(
+        self,
+        job_id: str,
+        chunk_index: int,
+        audio: AudioChunk,
+    ) -> tuple[str, AudioMetrics]:
+        """Persist a single chunk WAV with stable identity."""
+        samples = normalize_audio_chunk(audio)
+        self._ensure_output_directory()
+        chunk_dir = self.output_directory / "chunks" / job_id
+        chunk_dir.mkdir(parents=True, exist_ok=True)
+        final_path = self.chunk_path_for(job_id, chunk_index)
+        temporary = self.output_directory / f".chunk_{job_id}_{chunk_index}.{uuid4().hex}.tmp.wav"
+        try:
+            sf.write(str(temporary), samples, audio.sample_rate, format="WAV", subtype="PCM_16")
+            metrics = validate_wav(
+                temporary,
+                max_duration_seconds=self.max_duration_seconds,
+            )
+            os.replace(temporary, final_path)
+            published = validate_wav(final_path, max_duration_seconds=self.max_duration_seconds)
+            if published != metrics:
+                final_path.unlink(missing_ok=True)
+                raise AudioValidationError("published chunk WAV changed during atomic publication")
+            chunk_id = f"{job_id}_{chunk_index:04d}"
+            return f"narrations/{job_id}/chunks/{chunk_index}", published
+        finally:
+            temporary.unlink(missing_ok=True)
+
     def publish(self, job_id: str, audio: AudioChunk) -> tuple[str, AudioMetrics]:
         samples = normalize_audio_chunk(audio)
         self._ensure_output_directory()
