@@ -165,6 +165,11 @@ class AudioAssembler:
             "end": 0,
         }
 
+    def pause_frames_for(self, boundary: str, sample_rate: int) -> int:
+        """Resolve the exact persisted assembly pause for one physical boundary."""
+        pause_ms = self.pause_ms.get(boundary, self.pause_ms["fallback"])
+        return round(sample_rate * pause_ms / 1000)
+
     def assemble(
         self,
         text_chunks: list[TextChunk],
@@ -205,8 +210,7 @@ class AudioAssembler:
                 }
             )
             if index < len(normalized) - 1:
-                pause_ms = self.pause_ms.get(text_chunk.boundary, self.pause_ms["fallback"])
-                pause_frames = round(sample_rate * pause_ms / 1000)
+                pause_frames = self.pause_frames_for(text_chunk.boundary, sample_rate)
                 if pause_frames:
                     pause_start = current_frame
                     parts.append(np.zeros((pause_frames, channels), dtype=np.float32))
@@ -623,11 +627,9 @@ class AtomicWavStream:
             }
         )
         if append_pause:
-            pause_ms = self.assembler.pause_ms.get(
-                text_chunk.boundary,
-                self.assembler.pause_ms["fallback"],
+            pause_frames = self.assembler.pause_frames_for(
+                text_chunk.boundary, self._sample_rate
             )
-            pause_frames = round(self._sample_rate * pause_ms / 1000)
             if pause_frames:
                 pause_start = self._current_frame
                 self._output.write(

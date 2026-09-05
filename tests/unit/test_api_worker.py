@@ -139,6 +139,7 @@ def test_chunk_regeneration_publishes_independent_idempotent_candidates(
         assert original["start_char"] == 0
         assert original["end_char"] > original["start_char"]
         assert original["boundary"]
+        assert original["pause_after_frames"] == 0
         assert original["chunking_identity"] == job["metadata"]["chunking_identity"]
         assert "take_number" not in original
 

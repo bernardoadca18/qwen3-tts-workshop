@@ -280,6 +280,7 @@ async def list_job_chunks(
         return []
 
     chunks_out = []
+    assembly_timeline = job.metadata.get("assembly_timeline", [])
     for chunk_meta in chunks_metadata:
         chunk_index = chunk_meta["index"]
         chunk_id = f"{job_id}_{chunk_index:04d}"
@@ -287,6 +288,25 @@ async def list_job_chunks(
             _, metrics = service.verified_chunk(job_id, chunk_index)
         except AudioValidationError:
             continue
+
+        pause_after_frames = chunk_meta.get("pause_after_frames")
+        if not isinstance(pause_after_frames, int) or pause_after_frames < 0:
+            # Jobs completed before pause_after_frames was persisted still carry
+            # the immutable assembly timeline. Recover the exact historical frame
+            # count from that timeline instead of consulting today's defaults.
+            pause_after_frames = 0
+            for item in assembly_timeline if isinstance(assembly_timeline, list) else []:
+                if not isinstance(item, dict):
+                    continue
+                if item.get("kind") != "inserted_pause" or item.get("chunk_index") != chunk_index:
+                    continue
+                try:
+                    start = float(item["start_seconds"])
+                    end = float(item["end_seconds"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                pause_after_frames = max(0, round((end - start) * metrics.sample_rate))
+                break
 
         chunks_out.append(
             ChunkArtifactOut(
@@ -304,6 +324,7 @@ async def list_job_chunks(
                 start_char=chunk_meta["start_char"],
                 end_char=chunk_meta["end_char"],
                 boundary=chunk_meta["boundary"],
+                pause_after_frames=pause_after_frames,
                 chunking_identity=job.chunking_identity,
                 chunking_strategy_version=job.metadata["chunking_strategy_version"],
                 voice_identity=job.voice_identity,

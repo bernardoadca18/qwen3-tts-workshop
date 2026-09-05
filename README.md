@@ -154,7 +154,10 @@ There are no hidden synthesis retries.
 Completed narration jobs expose their original physical chunks through
 `GET /v1/narrations/{job_id}/chunks` and
 `GET /v1/narrations/{job_id}/chunks/{chunk_index}/audio`. The list includes the frozen character
-span, boundary, chunking identity, profile identities, synthesis text, seed and WAV identity.
+span, boundary, chunking identity, profile identities, synthesis text, seed and WAV identity. It
+also returns `pause_after_frames`, the exact resolved silence used after that chunk (zero for the
+final chunk). Older completed jobs recover it from their immutable assembly timeline rather than
+consulting current pause defaults.
 
 `POST /v1/narrations/{job_id}/chunks/{chunk_index}/regenerate` requires an explicit seed and an
 `Idempotency-Key`. It synthesizes the stored `synthesis_text` through the same bounded inference

@@ -49,6 +49,26 @@ def test_assembly_preserves_order_and_inserts_silence_without_crossfade() -> Non
     }
 
 
+def test_resolved_pause_frames_match_every_boundary_policy_exactly() -> None:
+    assembler = AudioAssembler(
+        sentence_pause_ms=100,
+        paragraph_pause_ms=200,
+        fallback_pause_ms=50,
+        hard_split_pause_ms=20,
+    )
+    assert {
+        boundary: assembler.pause_frames_for(boundary, 24_000)
+        for boundary in ("sentence", "paragraph", "fallback", "hard", "end")
+    } == {
+        "sentence": 2_400,
+        "paragraph": 4_800,
+        "fallback": 1_200,
+        "hard": 480,
+        "end": 0,
+    }
+    assert assembler.pause_frames_for("future-boundary", 24_000) == 1_200
+
+
 def test_invalid_provider_audio_is_rejected() -> None:
     with pytest.raises(AudioValidationError, match="non-finite"):
         normalize_audio_chunk(AudioChunk(np.array([0.0, np.nan]), 24000))

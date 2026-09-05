@@ -179,6 +179,7 @@ class ChunkArtifactOut(BaseModel):
     start_char: int
     end_char: int
     boundary: str
+    pause_after_frames: int
     chunking_identity: str
     chunking_strategy_version: str
     voice_identity: str

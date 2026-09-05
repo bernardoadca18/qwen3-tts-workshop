@@ -685,6 +685,13 @@ class NarrationService:
                         "start_char": chunk.start_char,
                         "end_char": chunk.end_char,
                         "boundary": chunk.boundary,
+                        "pause_after_frames": (
+                            self.assembler.pause_frames_for(
+                                chunk.boundary, chunk_metrics.sample_rate
+                            )
+                            if index < len(chunks)
+                            else 0
+                        ),
                         "seed": chunk.seed,
                         "text": chunk.text,
                         "synthesis_text": chunk.text,
