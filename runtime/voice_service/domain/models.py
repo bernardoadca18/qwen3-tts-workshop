@@ -94,9 +94,45 @@ class ChunkArtifact:
     byte_size: int
     sha256: str
     frame_count: int
-    status: str  # "active" | "candidate" | "superseded" | "rejected" | "failed"
+    start_char: int
+    end_char: int
+    boundary: str
+    chunking_identity: str
+    chunking_strategy_version: str
+    voice_identity: str
+    generation_identity: str
     created_at: str
-    take_number: int = 1  # 1 = initial take, 2+ = regeneration candidates
+
+
+@dataclass(frozen=True)
+class ChunkCandidate:
+    """One immutable manual regeneration artifact owned by the voice service."""
+
+    id: str
+    job_id: str
+    chunk_index: int
+    text: str
+    synthesis_text: str
+    seed: int
+    voice_identity: str
+    generation_identity: str
+    request_fingerprint: str
+    idempotency_key: str
+    status: str
+    created_at: str
+    started_at: str | None = None
+    completed_at: str | None = None
+    output_uri: str | None = None
+    duration_seconds: float | None = None
+    sample_rate: int | None = None
+    channels: int | None = None
+    subtype: str | None = None
+    byte_size: int | None = None
+    sha256: str | None = None
+    frame_count: int | None = None
+    riff_data_byte_size: int | None = None
+    error_category: str | None = None
+    error_message: str | None = None
 
 
 @dataclass

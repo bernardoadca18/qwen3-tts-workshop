@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 from typing import Annotated, cast
 
 import numpy as np
@@ -23,6 +22,7 @@ from voice_service.api.schemas import (
 from voice_service.domain import JobStatus
 from voice_service.services.audio import AudioValidationError
 from voice_service.services.narration import (
+    ChunkRegenerationFailedError,
     IdempotencyConflictError,
     NarrationClientError,
     NarrationQueueFullError,
@@ -267,9 +267,10 @@ async def list_job_chunks(
 ) -> list[ChunkArtifactOut]:
     """List all persisted chunk artifacts for a narration job."""
     service = _service(request)
-    job = service.jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        job = service.get(job_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="job not found") from exc
 
     if job.status != JobStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="job not completed")
@@ -282,9 +283,9 @@ async def list_job_chunks(
     for chunk_meta in chunks_metadata:
         chunk_index = chunk_meta["index"]
         chunk_id = f"{job_id}_{chunk_index:04d}"
-        chunk_path = service.publisher.chunk_path_for(job_id, chunk_index)
-
-        if not chunk_path.exists():
+        try:
+            _, metrics = service.verified_chunk(job_id, chunk_index)
+        except AudioValidationError:
             continue
 
         chunks_out.append(
@@ -295,14 +296,19 @@ async def list_job_chunks(
                 text=chunk_meta.get("text", ""),
                 synthesis_text=chunk_meta.get("synthesis_text", ""),
                 seed=chunk_meta["seed"],
-                duration_seconds=chunk_meta.get("chunk_duration_seconds", chunk_meta.get("audio_duration_seconds", 0.0)),
-                sample_rate=chunk_meta.get("chunk_sample_rate", 24000),
-                byte_size=chunk_meta.get("chunk_byte_size", 0),
-                sha256=chunk_meta.get("chunk_sha256", ""),
-                frame_count=int(chunk_meta.get("chunk_duration_seconds", 0) * chunk_meta.get("chunk_sample_rate", 24000)),
-                status="active",
+                duration_seconds=metrics.duration_seconds,
+                sample_rate=metrics.sample_rate,
+                byte_size=metrics.byte_size,
+                sha256=metrics.sha256,
+                frame_count=metrics.frame_count,
+                start_char=chunk_meta["start_char"],
+                end_char=chunk_meta["end_char"],
+                boundary=chunk_meta["boundary"],
+                chunking_identity=job.chunking_identity,
+                chunking_strategy_version=job.metadata["chunking_strategy_version"],
+                voice_identity=job.voice_identity,
+                generation_identity=job.generation_identity,
                 created_at=job.completed_at or job.created_at,
-                take_number=1,
                 audio_url=f"/v1/narrations/{job_id}/chunks/{chunk_index}/audio",
             )
         )
@@ -322,22 +328,66 @@ async def get_chunk_audio(
 ) -> FileResponse:
     """Download a specific chunk's WAV audio file."""
     service = _service(request)
-    job = service.jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
+    try:
+        job = service.get(job_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="job not found") from exc
 
     if job.status != JobStatus.COMPLETED:
         raise HTTPException(status_code=400, detail="job not completed")
 
-    chunk_path = service.publisher.chunk_path_for(job_id, chunk_index)
-    if not chunk_path.exists():
-        raise HTTPException(status_code=404, detail="chunk not found")
+    try:
+        chunk_path, metrics = service.verified_chunk(job_id, chunk_index)
+    except NarrationClientError as exc:
+        raise HTTPException(status_code=404, detail="chunk not found") from exc
+    except AudioValidationError as exc:
+        raise HTTPException(status_code=409, detail="chunk failed integrity checks") from exc
 
     return FileResponse(
         path=chunk_path,
         media_type="audio/wav",
         filename=f"{job_id}_chunk_{chunk_index:04d}.wav",
         content_disposition_type="inline",
+        stat_result=chunk_path.stat(),
+        headers={
+            "ETag": f'"{metrics.sha256}"',
+            "Cache-Control": "private, no-cache, must-revalidate",
+            "X-Audio-SHA256": metrics.sha256,
+        },
+    )
+
+
+@router.api_route(
+    "/v1/narrations/{job_id}/chunk-candidates/{candidate_id}/audio",
+    methods=["GET", "HEAD"],
+    tags=["narrations"],
+)
+async def get_chunk_candidate_audio(
+    job_id: str,
+    candidate_id: str,
+    request: Request,
+) -> FileResponse:
+    """Download exactly one immutable regeneration artifact by stable identity."""
+    service = _service(request)
+    try:
+        path, metrics = service.verified_chunk_candidate(job_id, candidate_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="chunk candidate not found") from exc
+    except (AudioValidationError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409, detail="chunk candidate failed integrity checks"
+        ) from exc
+    return FileResponse(
+        path=path,
+        media_type="audio/wav",
+        filename=f"{candidate_id}.wav",
+        content_disposition_type="inline",
+        stat_result=path.stat(),
+        headers={
+            "ETag": f'"{metrics.sha256}"',
+            "Cache-Control": "private, no-cache, must-revalidate",
+            "X-Audio-SHA256": metrics.sha256,
+        },
     )
 
 
@@ -360,77 +410,30 @@ async def regenerate_chunk(
     frozen synthesis text snapshot and the provided seed. The candidate is NOT
     automatically promoted - the caller must decide whether to use it.
     """
-    import time
-
     service = _service(request)
-    job = service.jobs.get(job_id)
-    if job is None:
-        raise HTTPException(status_code=404, detail="job not found")
-
-    if job.status != JobStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail="job not completed")
-
-    chunks_metadata = job.metadata.get("chunks", [])
-    if not chunks_metadata:
-        raise HTTPException(status_code=404, detail="job has no chunks")
-
-    chunk_meta = None
-    for cm in chunks_metadata:
-        if cm["index"] == chunk_index:
-            chunk_meta = cm
-            break
-
-    if chunk_meta is None:
-        raise HTTPException(status_code=404, detail="chunk not found")
-
-    # Get frozen synthesis text
-    synthesis_text = chunk_meta.get("synthesis_text", chunk_meta.get("text", ""))
-
-    # Regenerate with new seed
-    try:
-        audio = await service.provider.generate(
-            text=synthesis_text,
-            speaker=service.provider.speaker,
-            seed=payload.seed,
+    if idempotency_key is None or not (1 <= len(idempotency_key) <= 200):
+        raise HTTPException(
+            status_code=400,
+            detail="valid Idempotency-Key is required for chunk regeneration",
         )
-    except Exception as exc:
+    try:
+        candidate, created = await service.create_chunk_candidate(
+            job_id=job_id,
+            chunk_index=chunk_index,
+            seed=payload.seed,
+            idempotency_key=idempotency_key,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="job not found") from exc
+    except IdempotencyConflictError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except NarrationClientError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except NarrationQueueFullError as exc:
+        raise HTTPException(status_code=503, detail="narration queue is full") from exc
+    except ChunkRegenerationFailedError as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"chunk regeneration failed: {exc}",
+            detail=exc.candidate.error_message or "chunk regeneration failed",
         ) from exc
-
-    # Persist the candidate chunk
-    created_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    chunk_uri, chunk_metrics = await asyncio.to_thread(
-        service.publisher.publish_chunk,
-        job_id,
-        chunk_index,
-        audio,
-    )
-
-    # Determine take number (count existing chunks at this index)
-    chunk_dir = service.publisher.output_directory / "chunks" / job_id
-    take_number = 1
-    if chunk_dir.exists():
-        existing = list(chunk_dir.glob(f"chunk_{chunk_index:04d}_take_*.wav"))
-        take_number = len(existing) + 2  # +1 for original, +1 for next
-
-    chunk_id = f"{job_id}_{chunk_index:04d}_take_{take_number}"
-
-    return ChunkRegenerateOut(
-        chunk_id=chunk_id,
-        job_id=job_id,
-        chunk_index=chunk_index,
-        text=chunk_meta.get("text", ""),
-        synthesis_text=synthesis_text,
-        seed=payload.seed,
-        duration_seconds=chunk_metrics.duration_seconds,
-        sample_rate=chunk_metrics.sample_rate,
-        byte_size=chunk_metrics.byte_size,
-        sha256=chunk_metrics.sha256,
-        frame_count=chunk_metrics.frame_count,
-        status="candidate",
-        created_at=created_at,
-        take_number=take_number,
-        audio_url=f"/v1/narrations/{job_id}/chunks/{chunk_index}/audio?take={take_number}",
-    )
+    return ChunkRegenerateOut.from_candidate(candidate, created=created)

@@ -67,7 +67,8 @@ class FakeTTSProvider:
                     else max(240, len(text) * 30)
                 )
                 phase = np.arange(frames, dtype=np.float32)
-                samples = 0.2 * np.sin(2 * np.pi * 220 * phase / 24000)
+                frequency = 220 + (seed % 97)
+                samples = 0.2 * np.sin(2 * np.pi * frequency * phase / 24000)
             return AudioChunk(samples=samples, sample_rate=24000)
         finally:
             self.active -= 1

@@ -1,6 +1,7 @@
 from voice_service.domain.models import (
     AudioChunk,
     AudioMetrics,
+    ChunkCandidate,
     ChunkQualityMetrics,
     GenerationProfile,
     JobStatus,
@@ -12,6 +13,7 @@ from voice_service.domain.models import (
 __all__ = [
     "AudioChunk",
     "AudioMetrics",
+    "ChunkCandidate",
     "ChunkQualityMetrics",
     "GenerationProfile",
     "JobStatus",

@@ -5,7 +5,7 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel, Field
 
-from voice_service.domain import GenerationProfile, NarrationJob, VoiceProfile
+from voice_service.domain import ChunkCandidate, GenerationProfile, NarrationJob, VoiceProfile
 
 
 class NarrationCreate(BaseModel):
@@ -154,7 +154,7 @@ class SpeakerEmbeddingOut(BaseModel):
     @classmethod
     def from_numpy(
         cls, embedding: np.ndarray, sample_rate: int
-    ) -> "SpeakerEmbeddingOut":
+    ) -> SpeakerEmbeddingOut:
         return cls(
             dimension=len(embedding),
             sample_rate=sample_rate,
@@ -176,9 +176,14 @@ class ChunkArtifactOut(BaseModel):
     byte_size: int
     sha256: str
     frame_count: int
-    status: str
+    start_char: int
+    end_char: int
+    boundary: str
+    chunking_identity: str
+    chunking_strategy_version: str
+    voice_identity: str
+    generation_identity: str
     created_at: str
-    take_number: int
     audio_url: str
 
 
@@ -191,7 +196,7 @@ class ChunkRegenerateRequest(BaseModel):
 class ChunkRegenerateOut(BaseModel):
     """Response from regenerating a single chunk."""
 
-    chunk_id: str
+    candidate_id: str
     job_id: str
     chunk_index: int
     text: str
@@ -203,6 +208,39 @@ class ChunkRegenerateOut(BaseModel):
     sha256: str
     frame_count: int
     status: str
+    created: bool
     created_at: str
-    take_number: int
     audio_url: str
+
+    @classmethod
+    def from_candidate(
+        cls, candidate: ChunkCandidate, *, created: bool
+    ) -> ChunkRegenerateOut:
+        if (
+            candidate.duration_seconds is None
+            or candidate.sample_rate is None
+            or candidate.byte_size is None
+            or candidate.sha256 is None
+            or candidate.frame_count is None
+        ):
+            raise ValueError("completed chunk candidate metadata is incomplete")
+        return cls(
+            candidate_id=candidate.id,
+            job_id=candidate.job_id,
+            chunk_index=candidate.chunk_index,
+            text=candidate.text,
+            synthesis_text=candidate.synthesis_text,
+            seed=candidate.seed,
+            duration_seconds=candidate.duration_seconds,
+            sample_rate=candidate.sample_rate,
+            byte_size=candidate.byte_size,
+            sha256=candidate.sha256,
+            frame_count=candidate.frame_count,
+            status=candidate.status,
+            created=created,
+            created_at=candidate.created_at,
+            audio_url=(
+                f"/v1/narrations/{candidate.job_id}/chunk-candidates/"
+                f"{candidate.id}/audio"
+            ),
+        )

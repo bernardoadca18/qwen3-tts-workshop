@@ -149,6 +149,22 @@ same seed sequence. CUDA kernels may still prevent bit-for-bit equivalence; the
 service promises traceable reproducibility metadata, not impossible guarantees.
 There are no hidden synthesis retries.
 
+### Physical chunks and immutable regeneration
+
+Completed narration jobs expose their original physical chunks through
+`GET /v1/narrations/{job_id}/chunks` and
+`GET /v1/narrations/{job_id}/chunks/{chunk_index}/audio`. The list includes the frozen character
+span, boundary, chunking identity, profile identities, synthesis text, seed and WAV identity.
+
+`POST /v1/narrations/{job_id}/chunks/{chunk_index}/regenerate` requires an explicit seed and an
+`Idempotency-Key`. It synthesizes the stored `synthesis_text` through the same bounded inference
+worker and publishes a new UUID-addressed WAV. It never writes the original `chunk_NNNN.wav`.
+The response's `candidate_id` is retrieved exactly through
+`GET /v1/narrations/{job_id}/chunk-candidates/{candidate_id}/audio`; there is no query-parameter
+take alias. Replaying the same key and inputs returns the same candidate, while changed inputs
+return HTTP 409. Qwen owns only artifact generation and integrity—promotion, rejection and the
+current-take pointer remain Orchestrator decisions.
+
 ## Long text and audio assembly
 
 The character-bounded heuristic preserves every original character and order. Production defaults

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import time
 from collections.abc import Callable
 
@@ -120,6 +121,140 @@ def test_create_status_audio_and_safe_metadata(app_factory: Callable) -> None:
         assert invalid.status_code == 416
         assert client.get("/v1/narrations/missing").status_code == 404
         assert client.get("/v1/narrations/missing/audio").status_code == 404
+
+
+def test_chunk_regeneration_publishes_independent_idempotent_candidates(
+    app_factory: Callable,
+) -> None:
+    app, provider = app_factory()
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/narrations",
+            json={"text": "Texto físico congelado para regeneração.", "seed": 42},
+        ).json()
+        job = wait_terminal(client, created["id"])
+        chunks = client.get(f"/v1/narrations/{job['id']}/chunks")
+        assert chunks.status_code == 200
+        original = chunks.json()[0]
+        assert original["start_char"] == 0
+        assert original["end_char"] > original["start_char"]
+        assert original["boundary"]
+        assert original["chunking_identity"] == job["metadata"]["chunking_identity"]
+        assert "take_number" not in original
+
+        original_response = client.get(original["audio_url"])
+        original_bytes = original_response.content
+        original_sha = hashlib.sha256(original_bytes).hexdigest()
+        assert original_response.status_code == 200
+        assert original_sha == original["sha256"]
+        calls_before = len(provider.calls)
+
+        first = client.post(
+            f"/v1/narrations/{job['id']}/chunks/{original['chunk_index']}/regenerate",
+            json={"seed": 700},
+            headers={"Idempotency-Key": "chunk-regeneration-a"},
+        )
+        assert first.status_code == 200
+        first_candidate = first.json()
+        assert first_candidate["created"] is True
+        assert first_candidate["status"] == "completed"
+        assert first_candidate["synthesis_text"] == original["synthesis_text"]
+        assert "take_number" not in first_candidate
+        first_audio = client.get(first_candidate["audio_url"])
+        assert first_audio.status_code == 200
+        first_bytes = first_audio.content
+        assert hashlib.sha256(first_bytes).hexdigest() == first_candidate["sha256"]
+        assert first_bytes != original_bytes
+
+        second = client.post(
+            f"/v1/narrations/{job['id']}/chunks/{original['chunk_index']}/regenerate",
+            json={"seed": 701},
+            headers={"Idempotency-Key": "chunk-regeneration-b"},
+        )
+        assert second.status_code == 200
+        second_candidate = second.json()
+        second_bytes = client.get(second_candidate["audio_url"]).content
+        assert second_candidate["candidate_id"] != first_candidate["candidate_id"]
+        assert hashlib.sha256(second_bytes).hexdigest() == second_candidate["sha256"]
+        assert second_bytes != first_bytes
+
+        # Candidate A and the original remain independently addressable after B exists.
+        assert client.get(first_candidate["audio_url"]).content == first_bytes
+        assert client.get(original["audio_url"]).content == original_bytes
+        assert hashlib.sha256(client.get(original["audio_url"]).content).hexdigest() == original_sha
+
+        replay = client.post(
+            f"/v1/narrations/{job['id']}/chunks/{original['chunk_index']}/regenerate",
+            json={"seed": 700},
+            headers={"Idempotency-Key": "chunk-regeneration-a"},
+        )
+        assert replay.status_code == 200
+        assert replay.json()["candidate_id"] == first_candidate["candidate_id"]
+        assert replay.json()["created"] is False
+        assert len(provider.calls) == calls_before + 2
+        assert provider.calls[-2]["text"] == original["synthesis_text"]
+        assert provider.calls[-1]["text"] == original["synthesis_text"]
+
+        conflict = client.post(
+            f"/v1/narrations/{job['id']}/chunks/{original['chunk_index']}/regenerate",
+            json={"seed": 702},
+            headers={"Idempotency-Key": "chunk-regeneration-a"},
+        )
+        assert conflict.status_code == 409
+        missing_key = client.post(
+            f"/v1/narrations/{job['id']}/chunks/{original['chunk_index']}/regenerate",
+            json={"seed": 703},
+        )
+        assert missing_key.status_code == 400
+
+
+def test_failed_chunk_regeneration_keeps_original_artifact(app_factory: Callable) -> None:
+    app, provider = app_factory()
+    with TestClient(app) as client:
+        created = client.post(
+            "/v1/narrations", json={"text": "Original preservado.", "seed": 11}
+        ).json()
+        job = wait_terminal(client, created["id"])
+        original_url = f"/v1/narrations/{job['id']}/chunks/0/audio"
+        original = client.get(original_url).content
+        provider.fail = True
+
+        failed = client.post(
+            f"/v1/narrations/{job['id']}/chunks/0/regenerate",
+            json={"seed": 12},
+            headers={"Idempotency-Key": "failed-regeneration"},
+        )
+
+        assert failed.status_code == 500
+        assert client.get(original_url).content == original
+
+
+def test_chunk_candidate_idempotency_survives_service_restart(app_factory: Callable) -> None:
+    first_app, _ = app_factory()
+    with TestClient(first_app) as client:
+        created = client.post(
+            "/v1/narrations", json={"text": "Candidato durável.", "seed": 40}
+        ).json()
+        job = wait_terminal(client, created["id"])
+        response = client.post(
+            f"/v1/narrations/{job['id']}/chunks/0/regenerate",
+            json={"seed": 41},
+            headers={"Idempotency-Key": "restart-stable-candidate"},
+        ).json()
+        candidate_bytes = client.get(response["audio_url"]).content
+
+    second_app, second_provider = app_factory()
+    with TestClient(second_app) as client:
+        replay = client.post(
+            f"/v1/narrations/{job['id']}/chunks/0/regenerate",
+            json={"seed": 41},
+            headers={"Idempotency-Key": "restart-stable-candidate"},
+        )
+        assert replay.status_code == 200
+        assert replay.json()["candidate_id"] == response["candidate_id"]
+        assert replay.json()["created"] is False
+        assert client.get(replay.json()["audio_url"]).content == candidate_bytes
+    assert second_provider.calls == []
 
 
 def test_benchmark_reference_uses_ephemeral_xvector_profile_without_registry_mutation(

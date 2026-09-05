@@ -152,6 +152,7 @@ def test_ephemeral_prompt_cache_is_lru_bounded_while_registered_profiles_stay_pi
         "maximum_ephemeral_entries": 2,
         "ephemeral_limit": 2,
         "active_entries": 0,
+        "reference_embedding_entries": 0,
         "hits": 1,
         "misses": 4,
         "evictions": 1,

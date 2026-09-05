@@ -419,6 +419,22 @@ class AtomicWavPublisher:
             raise ValueError("invalid chunk index")
         return self.output_directory / "chunks" / job_id / f"chunk_{chunk_index:04d}.wav"
 
+    def chunk_candidate_path_for(self, job_id: str, candidate_id: str) -> Path:
+        """Path for one immutable regeneration artifact."""
+        if len(job_id) != 32 or any(char not in "0123456789abcdef" for char in job_id):
+            raise ValueError("invalid job id")
+        if len(candidate_id) != 32 or any(
+            char not in "0123456789abcdef" for char in candidate_id
+        ):
+            raise ValueError("invalid chunk candidate id")
+        return (
+            self.output_directory
+            / "chunks"
+            / job_id
+            / "candidates"
+            / f"{candidate_id}.wav"
+        )
+
     def publish_chunk(
         self,
         job_id: str,
@@ -443,8 +459,59 @@ class AtomicWavPublisher:
             if published != metrics:
                 final_path.unlink(missing_ok=True)
                 raise AudioValidationError("published chunk WAV changed during atomic publication")
-            chunk_id = f"{job_id}_{chunk_index:04d}"
             return f"narrations/{job_id}/chunks/{chunk_index}", published
+        finally:
+            temporary.unlink(missing_ok=True)
+
+    def publish_chunk_candidate(
+        self,
+        job_id: str,
+        candidate_id: str,
+        audio: AudioChunk,
+    ) -> tuple[str, AudioMetrics]:
+        """Publish one candidate exactly once without touching the original chunk."""
+        samples = normalize_audio_chunk(audio)
+        final_path = self.chunk_candidate_path_for(job_id, candidate_id)
+        final_path.parent.mkdir(parents=True, exist_ok=True)
+        if final_path.exists():
+            published = validate_wav(
+                final_path,
+                max_duration_seconds=self.max_duration_seconds,
+            )
+            return (
+                f"narrations/{job_id}/chunk-candidates/{candidate_id}/audio",
+                published,
+            )
+
+        temporary = final_path.parent / f".{candidate_id}.{uuid4().hex}.tmp.wav"
+        try:
+            sf.write(str(temporary), samples, audio.sample_rate, format="WAV", subtype="PCM_16")
+            metrics = validate_wav(
+                temporary,
+                max_duration_seconds=self.max_duration_seconds,
+            )
+            try:
+                # Hard-link publication is atomic and refuses to replace an existing identity.
+                os.link(temporary, final_path)
+            except FileExistsError:
+                published = validate_wav(
+                    final_path,
+                    max_duration_seconds=self.max_duration_seconds,
+                )
+                return (
+                    f"narrations/{job_id}/chunk-candidates/{candidate_id}/audio",
+                    published,
+                )
+            published = validate_wav(final_path, max_duration_seconds=self.max_duration_seconds)
+            if published != metrics:
+                final_path.unlink(missing_ok=True)
+                raise AudioValidationError(
+                    "published chunk candidate WAV changed during atomic publication"
+                )
+            return (
+                f"narrations/{job_id}/chunk-candidates/{candidate_id}/audio",
+                published,
+            )
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -474,6 +541,26 @@ class AtomicWavPublisher:
 
     def reconcile(self, job_id: str) -> AudioMetrics | None:
         path = self.path_for(job_id)
+        if not path.is_file():
+            return None
+        try:
+            return validate_wav(path, max_duration_seconds=self.max_duration_seconds)
+        except AudioValidationError:
+            return None
+
+    def reconcile_chunk(self, job_id: str, chunk_index: int) -> AudioMetrics | None:
+        path = self.chunk_path_for(job_id, chunk_index)
+        if not path.is_file():
+            return None
+        try:
+            return validate_wav(path, max_duration_seconds=self.max_duration_seconds)
+        except AudioValidationError:
+            return None
+
+    def reconcile_chunk_candidate(
+        self, job_id: str, candidate_id: str
+    ) -> AudioMetrics | None:
+        path = self.chunk_candidate_path_for(job_id, candidate_id)
         if not path.is_file():
             return None
         try:
