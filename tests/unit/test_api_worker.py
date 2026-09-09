@@ -141,6 +141,10 @@ def test_chunk_regeneration_publishes_independent_idempotent_candidates(
         assert original["boundary"]
         assert original["pause_after_frames"] == 0
         assert original["chunking_identity"] == job["metadata"]["chunking_identity"]
+        assert original["speaker_similarity"] == 0.999
+        assert original["speaker_identity_status"] == "passed"
+        assert original["speaker_similarity_policy_version"] == "qwen_ecapa_warning_v1"
+        assert original["speaker_similarity_reference_identity"]
         assert "take_number" not in original
 
         original_response = client.get(original["audio_url"])
@@ -159,6 +163,8 @@ def test_chunk_regeneration_publishes_independent_idempotent_candidates(
         first_candidate = first.json()
         assert first_candidate["created"] is True
         assert first_candidate["status"] == "completed"
+        assert first_candidate["speaker_similarity"] == 0.999
+        assert first_candidate["speaker_identity_status"] == "passed"
         assert first_candidate["synthesis_text"] == original["synthesis_text"]
         assert "take_number" not in first_candidate
         first_audio = client.get(first_candidate["audio_url"])

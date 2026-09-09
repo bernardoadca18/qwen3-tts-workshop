@@ -42,7 +42,26 @@ and `202` remain useful benchmark canaries and are intentionally not production 
 ## Boundaries and known limitations
 
 - Existing duration, artifact, ASR/content and retry guards remain authoritative and unchanged.
-- Speaker drift remains possible; ASR is not a speaker verifier.
+- Speaker drift remains possible; ASR is not a speaker verifier. The runtime now records
+  warning-only, chunk-level `qwen_ecapa_warning_v1` similarity diagnostics against the frozen
+  reference. The production voice/generation identities and acceptance policy remain unchanged.
 - Pronunciation lexicon work remains a separate, reviewed Orchestrator workflow.
 - Post-processing is not part of this freeze. The existing native WAV, deterministic assembly and
   transparent mastering path is unchanged.
+
+## 2026-09-09 controlled candidates
+
+- `narration_nonstreaming_v1` identity
+  `0de37fd2129c17ebcc21628436b2a5d464e804d8c4aad13b12da86ebdfd079ab` adds only
+  `non_streaming_mode=true`. Two of five comparison samples fell below the warning threshold,
+  versus zero of five for `narration_v2`; it was not promoted.
+- `bernardo_icl_candidate_v1` identity
+  `f6462cfb31e37e75406336f84fbc722463018f8307bdec7116f3d96356a09739` uses the same frozen
+  reference plus its ASR-validated transcript. Pace changed and one of five samples warned; blind
+  review is still required, so it was not promoted.
+- Existing temperature 0.80/0.70 candidates showed only a small single-text similarity/pace
+  trade-off. This is insufficient to replace the listening-selected production temperatures.
+- Warmup added about three seconds of explicit GPU work and did not reduce the measured first-call
+  wall time; `WARMUP_ENABLED=false` remains the operational default.
+
+See `upstream_audit_2026-09-09.md` for upstream release/PR status and benchmark decisions.

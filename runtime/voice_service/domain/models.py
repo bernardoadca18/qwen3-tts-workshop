@@ -133,6 +133,11 @@ class ChunkCandidate:
     riff_data_byte_size: int | None = None
     error_category: str | None = None
     error_message: str | None = None
+    speaker_similarity: float | None = None
+    speaker_similarity_reference_identity: str | None = None
+    speaker_similarity_policy_version: str | None = None
+    speaker_identity_status: str | None = None
+    speaker_embedding_seconds: float | None = None
 
 
 @dataclass

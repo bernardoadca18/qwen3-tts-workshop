@@ -29,6 +29,23 @@ generation_profiles:
       subtalker_top_k: 50
       max_new_tokens: 2048
 
+  narration_nonstreaming_v1:
+    # Experimental candidate only. It is byte-identical to narration_v2 at the
+    # profile boundary except for the explicit upstream input-feeding strategy.
+    version: "1"
+    parameters:
+      do_sample: true
+      temperature: 0.95
+      top_p: 1.0
+      top_k: 50
+      repetition_penalty: 1.05
+      subtalker_dosample: true
+      subtalker_temperature: 0.9
+      subtalker_top_p: 1.0
+      subtalker_top_k: 50
+      max_new_tokens: 2048
+      non_streaming_mode: true
+
   narration_temp080:
     version: "1"
     parameters:

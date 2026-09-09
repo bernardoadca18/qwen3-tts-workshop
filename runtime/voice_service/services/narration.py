@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from voice_service.core.config import Settings
 from voice_service.domain import (
+    AudioChunk,
     AudioMetrics,
     ChunkCandidate,
     JobStatus,
@@ -39,6 +40,7 @@ from voice_service.services.profiles import (
 from voice_service.services.text_chunker import TextChunker
 
 logger = logging.getLogger(__name__)
+SPEAKER_IDENTITY_POLICY_VERSION = "qwen_ecapa_warning_v1"
 
 
 class NarrationClientError(ValueError):
@@ -519,6 +521,7 @@ class NarrationService:
                 duration_grace_seconds=self.settings.chunk_duration_grace_seconds,
                 min_peak_amplitude=self.settings.chunk_min_peak_amplitude,
             )
+            speaker_diagnostics = await self._speaker_diagnostics(audio, voice)
             output_uri, metrics = await asyncio.to_thread(
                 self.publisher.publish_chunk_candidate,
                 job.id,
@@ -537,6 +540,7 @@ class NarrationService:
                 completed_at=utc_now(),
                 output_uri=output_uri,
                 metrics=metrics,
+                speaker_diagnostics=speaker_diagnostics,
             )
         except ChunkQualityGuardError:
             self.repository.mark_chunk_candidate_failed(
@@ -594,6 +598,13 @@ class NarrationService:
         if job is None or job.status is not JobStatus.QUEUED:
             return
         started = time.monotonic()
+        try:
+            queued_at = datetime.fromisoformat(job.created_at)
+            queue_wait_seconds = max(
+                0.0, (datetime.now(UTC) - queued_at).total_seconds()
+            )
+        except ValueError:
+            queue_wait_seconds = None
         stream: AtomicWavStream | None = None
         chunk_diagnostics: list[dict[str, object]] = []
         try:
@@ -607,7 +618,14 @@ class NarrationService:
                 raise ProfileConfigurationError(
                     "persisted profile identity no longer matches configuration"
                 )
+            cache_before = self.provider.metadata().prompt_cache or {}
+            prompt_started = time.monotonic()
             await self.provider.prepare_voice(voice)
+            prompt_prepare_seconds = time.monotonic() - prompt_started
+            cache_after = self.provider.metadata().prompt_cache or {}
+            prompt_cache_hit = int(cache_after.get("hits", 0)) > int(
+                cache_before.get("hits", 0)
+            )
             chunks = self.chunker.chunk(job.text, base_seed=job.resolved_seed)
             self.repository.mark_running(job.id, started_at=utc_now(), total_chunks=len(chunks))
             stream = self.publisher.begin_stream(job.id, self.assembler)
@@ -637,6 +655,7 @@ class NarrationService:
                         "end_char": chunk.end_char,
                         "boundary": chunk.boundary,
                         "seed": chunk.seed,
+                        "generation_seed": chunk.seed,
                         "text_length_chars": len(chunk.text),
                         "audio_duration_seconds": exc.metrics.audio_duration_seconds,
                         "synthesis_seconds": synthesis_seconds,
@@ -664,6 +683,7 @@ class NarrationService:
                     exc.diagnostics = rejected
                     raise
                 signal_diagnostics = analyze_audio_chunk_signal(audio)
+                speaker_diagnostics = await self._speaker_diagnostics(audio, voice)
 
                 # Persist chunk WAV with stable identity
                 chunk_uri, chunk_metrics = await asyncio.to_thread(
@@ -693,6 +713,7 @@ class NarrationService:
                             else 0
                         ),
                         "seed": chunk.seed,
+                        "generation_seed": chunk.seed,
                         "text": chunk.text,
                         "synthesis_text": chunk.text,
                         "chunk_uri": chunk_uri,
@@ -713,6 +734,7 @@ class NarrationService:
                             quality.maximum_allowed_duration_seconds
                         ),
                         "signal_diagnostics": signal_diagnostics,
+                        "speaker_identity": speaker_diagnostics,
                     }
                 )
                 self.repository.update_progress(job.id, current_chunk=index)
@@ -760,6 +782,15 @@ class NarrationService:
                 },
                 "synthesis_seconds": elapsed,
                 "real_time_factor": elapsed / metrics.duration_seconds,
+                "queue_wait_seconds": queue_wait_seconds,
+                "prompt_prepare_seconds": prompt_prepare_seconds,
+                "prompt_cache_hit": prompt_cache_hit,
+                "generation_seed": job.resolved_seed,
+                "requested_language": job.language,
+                "resolved_language": job.language,
+                "speaker_identity_summary": self._speaker_identity_summary(
+                    chunk_diagnostics
+                ),
             }
             self.repository.mark_completed(
                 job.id,
@@ -817,6 +848,83 @@ class NarrationService:
         finally:
             if stream is not None:
                 stream.abort()
+
+    async def _speaker_diagnostics(
+        self, audio: AudioChunk, voice: VoiceProfile
+    ) -> dict[str, object]:
+        if not self.settings.speaker_identity_diagnostics_enabled:
+            return {
+                "status": "disabled",
+                "policy_version": SPEAKER_IDENTITY_POLICY_VERSION,
+                "reference_identity": voice.identity,
+            }
+        started = time.monotonic()
+        try:
+            similarity = await asyncio.to_thread(
+                self.provider.speaker_similarity, audio, voice
+            )
+        except Exception:
+            logger.exception(
+                "speaker identity diagnostics unavailable voice_identity=%s",
+                voice.identity,
+            )
+            return {
+                "status": "unavailable",
+                "policy_version": SPEAKER_IDENTITY_POLICY_VERSION,
+                "reference_identity": voice.identity,
+                "embedding_seconds": time.monotonic() - started,
+            }
+        threshold = self.settings.speaker_similarity_warning_threshold
+        status = "passed" if similarity >= threshold else "warning"
+        return {
+            "status": status,
+            "similarity": similarity,
+            "warning_threshold": threshold,
+            "blocking": False,
+            "policy_version": SPEAKER_IDENTITY_POLICY_VERSION,
+            "reference_identity": voice.identity,
+            "embedding_seconds": time.monotonic() - started,
+        }
+
+    @staticmethod
+    def _speaker_identity_summary(
+        chunks: list[dict[str, object]],
+    ) -> dict[str, object]:
+        diagnostics = [
+            item.get("speaker_identity")
+            for item in chunks
+            if isinstance(item.get("speaker_identity"), dict)
+        ]
+        scores = sorted(
+            float(item["similarity"])
+            for item in diagnostics
+            if isinstance(item, dict) and isinstance(item.get("similarity"), int | float)
+        )
+        warnings: list[int] = []
+        for chunk in chunks:
+            diagnostic = chunk.get("speaker_identity")
+            index = chunk.get("index")
+            if (
+                isinstance(diagnostic, dict)
+                and diagnostic.get("status") == "warning"
+                and isinstance(index, int)
+            ):
+                warnings.append(index)
+        return {
+            "policy_version": SPEAKER_IDENTITY_POLICY_VERSION,
+            "evaluated_chunks": len(scores),
+            "minimum_chunk_similarity": scores[0] if scores else None,
+            "median_chunk_similarity": (
+                scores[len(scores) // 2]
+                if len(scores) % 2 == 1
+                else (scores[len(scores) // 2 - 1] + scores[len(scores) // 2]) / 2
+                if scores
+                else None
+            ),
+            "low_similarity_chunks": warnings,
+            "status": "warning" if warnings else "passed" if scores else "unavailable",
+            "blocking": False,
+        }
 
     def _fail(
         self,

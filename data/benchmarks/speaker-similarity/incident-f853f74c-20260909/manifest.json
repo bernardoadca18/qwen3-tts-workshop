@@ -1,0 +1,117 @@
+{
+  "schema": "neovids_speaker_similarity_calibration_v1",
+  "timestamp": "2026-09-09T16:41:32Z",
+  "voice": "bernardo_xvec_v2",
+  "generation": "narration_v2",
+  "reference_audio": "qwen3-tts-workshop/data/references/ref_full_processed_raw.wav",
+  "reference_embedding_dimension": 2048,
+  "extraction_method": "qwen_ecapa_tdnn",
+  "embedding_source": "service_api",
+  "text_length": 50,
+  "results": [
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0000.wav",
+      "similarity": 0.9906581044197083,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0003.wav",
+      "similarity": 0.9924405813217163,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0007.wav",
+      "similarity": 0.9911619424819946,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0010.wav",
+      "similarity": 0.9905902147293091,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0015.wav",
+      "similarity": 0.9913977980613708,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/1ee67bff4476490b9476011ca83c1eba.wav",
+      "similarity": 0.9941247701644897,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0000.wav",
+      "similarity": 0.9689012169837952,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/98e26eb3501146f6870b5d9de57bd54e.wav",
+      "similarity": 0.9941046833992004,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    }
+  ],
+  "analysis": {
+    "good": {
+      "count": 6,
+      "mean": 0.9917289018630981,
+      "std": 0.00123294774086325,
+      "min": 0.9905902147293091,
+      "max": 0.9941247701644897
+    },
+    "bad": {
+      "count": 2,
+      "mean": 0.9815029501914978,
+      "std": 0.012601733207702637,
+      "min": 0.9689012169837952,
+      "max": 0.9941046833992004
+    },
+    "threshold_recommendation": {
+      "value": 0.9905902147293091,
+      "method": "conservative_min_good",
+      "rationale": "Overlapping distributions - threshold at minimum good value",
+      "min_good": 0.9905902147293091,
+      "max_bad": 0.9941046833992004,
+      "warning": "Distributions overlap - manual review recommended"
+    }
+  }
+}

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from pydantic import BaseModel, Field
 
 from voice_service.domain import ChunkCandidate, GenerationProfile, NarrationJob, VoiceProfile
@@ -153,12 +154,12 @@ class SpeakerEmbeddingOut(BaseModel):
 
     @classmethod
     def from_numpy(
-        cls, embedding: np.ndarray, sample_rate: int
+        cls, embedding: NDArray[np.float32], sample_rate: int
     ) -> SpeakerEmbeddingOut:
         return cls(
             dimension=len(embedding),
             sample_rate=sample_rate,
-            embedding=embedding.tolist(),
+            embedding=[float(value) for value in embedding],
         )
 
 
@@ -186,6 +187,11 @@ class ChunkArtifactOut(BaseModel):
     generation_identity: str
     created_at: str
     audio_url: str
+    speaker_similarity: float | None = None
+    speaker_similarity_reference_identity: str | None = None
+    speaker_similarity_policy_version: str | None = None
+    speaker_identity_status: str | None = None
+    speaker_embedding_seconds: float | None = None
 
 
 class ChunkRegenerateRequest(BaseModel):
@@ -212,6 +218,11 @@ class ChunkRegenerateOut(BaseModel):
     created: bool
     created_at: str
     audio_url: str
+    speaker_similarity: float | None = None
+    speaker_similarity_reference_identity: str | None = None
+    speaker_similarity_policy_version: str | None = None
+    speaker_identity_status: str | None = None
+    speaker_embedding_seconds: float | None = None
 
     @classmethod
     def from_candidate(
@@ -244,4 +255,13 @@ class ChunkRegenerateOut(BaseModel):
                 f"/v1/narrations/{candidate.job_id}/chunk-candidates/"
                 f"{candidate.id}/audio"
             ),
+            speaker_similarity=candidate.speaker_similarity,
+            speaker_similarity_reference_identity=(
+                candidate.speaker_similarity_reference_identity
+            ),
+            speaker_similarity_policy_version=(
+                candidate.speaker_similarity_policy_version
+            ),
+            speaker_identity_status=candidate.speaker_identity_status,
+            speaker_embedding_seconds=candidate.speaker_embedding_seconds,
         )

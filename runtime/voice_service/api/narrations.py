@@ -132,7 +132,7 @@ async def get_narration_audio(job_id: str, request: Request) -> FileResponse:
         stat_result=path.stat(),
         headers={
             "ETag": f'"{metrics.sha256}"',
-            "Cache-Control": "private, no-cache, must-revalidate",
+            "Cache-Control": "private, max-age=31536000, immutable",
             "X-Audio-SHA256": metrics.sha256,
             "X-Audio-Duration-Seconds": f"{metrics.duration_seconds:.9f}",
             "X-Audio-Frame-Count": str(metrics.frame_count),
@@ -216,8 +216,11 @@ async def legacy_generate(payload: LegacyGenerateRequest, request: Request) -> F
     tags=["speaker-embeddings"],
 )
 async def extract_speaker_embedding(
-    audio: UploadFile = File(..., description="Audio file (WAV) to extract speaker embedding from"),
-    request: Request = None,
+    request: Request,
+    audio: Annotated[
+        UploadFile,
+        File(description="Audio file (WAV) to extract speaker embedding from"),
+    ],
 ) -> SpeakerEmbeddingOut:
     """Extract speaker embedding from uploaded audio using Qwen's ECAPA-TDNN encoder.
 
@@ -331,6 +334,31 @@ async def list_job_chunks(
                 generation_identity=job.generation_identity,
                 created_at=job.completed_at or job.created_at,
                 audio_url=f"/v1/narrations/{job_id}/chunks/{chunk_index}/audio",
+                speaker_similarity=(
+                    chunk_meta.get("speaker_identity", {}).get("similarity")
+                    if isinstance(chunk_meta.get("speaker_identity"), dict)
+                    else None
+                ),
+                speaker_similarity_reference_identity=(
+                    chunk_meta.get("speaker_identity", {}).get("reference_identity")
+                    if isinstance(chunk_meta.get("speaker_identity"), dict)
+                    else None
+                ),
+                speaker_similarity_policy_version=(
+                    chunk_meta.get("speaker_identity", {}).get("policy_version")
+                    if isinstance(chunk_meta.get("speaker_identity"), dict)
+                    else None
+                ),
+                speaker_identity_status=(
+                    chunk_meta.get("speaker_identity", {}).get("status")
+                    if isinstance(chunk_meta.get("speaker_identity"), dict)
+                    else None
+                ),
+                speaker_embedding_seconds=(
+                    chunk_meta.get("speaker_identity", {}).get("embedding_seconds")
+                    if isinstance(chunk_meta.get("speaker_identity"), dict)
+                    else None
+                ),
             )
         )
 
@@ -372,7 +400,7 @@ async def get_chunk_audio(
         stat_result=chunk_path.stat(),
         headers={
             "ETag": f'"{metrics.sha256}"',
-            "Cache-Control": "private, no-cache, must-revalidate",
+            "Cache-Control": "private, max-age=31536000, immutable",
             "X-Audio-SHA256": metrics.sha256,
         },
     )
@@ -406,7 +434,7 @@ async def get_chunk_candidate_audio(
         stat_result=path.stat(),
         headers={
             "ETag": f'"{metrics.sha256}"',
-            "Cache-Control": "private, no-cache, must-revalidate",
+            "Cache-Control": "private, max-age=31536000, immutable",
             "X-Audio-SHA256": metrics.sha256,
         },
     )

@@ -37,6 +37,7 @@ async def ready(request: Request) -> dict[str, object]:
         "queue_depth": runtime.service.queue_depth,
         "queue_capacity": runtime.settings.max_queue_size,
         "worker_operational": runtime.service.worker_operational,
+        "startup_metrics": runtime.startup_metrics,
         "prompt_cache": metadata.prompt_cache,
         "chunking_strategy_version": runtime.service.chunker.strategy_version,
         "chunking_identity": runtime.service.chunker.identity,

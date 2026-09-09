@@ -84,6 +84,11 @@ class NarrationJobRepository:
                     riff_data_byte_size INTEGER,
                     error_category TEXT,
                     error_message TEXT,
+                    speaker_similarity REAL,
+                    speaker_similarity_reference_identity TEXT,
+                    speaker_similarity_policy_version TEXT,
+                    speaker_identity_status TEXT,
+                    speaker_embedding_seconds REAL,
                     FOREIGN KEY(job_id) REFERENCES narration_jobs(id) ON DELETE CASCADE
                 );
                 CREATE INDEX IF NOT EXISTS ix_chunk_candidates_job_chunk_created
@@ -105,6 +110,22 @@ class NarrationJobRepository:
                 connection.execute(
                     "ALTER TABLE narration_jobs ADD COLUMN result_riff_data_byte_size INTEGER"
                 )
+            candidate_columns = {
+                row["name"]
+                for row in connection.execute("PRAGMA table_info(chunk_candidates)")
+            }
+            candidate_additions = {
+                "speaker_similarity": "REAL",
+                "speaker_similarity_reference_identity": "TEXT",
+                "speaker_similarity_policy_version": "TEXT",
+                "speaker_identity_status": "TEXT",
+                "speaker_embedding_seconds": "REAL",
+            }
+            for column, sql_type in candidate_additions.items():
+                if column not in candidate_columns:
+                    connection.execute(
+                        f"ALTER TABLE chunk_candidates ADD COLUMN {column} {sql_type}"
+                    )
 
     def create(self, job: NarrationJob) -> None:
         values = self._values(job)
@@ -180,7 +201,9 @@ class NarrationJobRepository:
         completed_at: str,
         output_uri: str,
         metrics: AudioMetrics,
+        speaker_diagnostics: dict[str, object] | None = None,
     ) -> None:
+        diagnostics = speaker_diagnostics or {}
         self._update_chunk_candidate(
             candidate_id,
             status="completed",
@@ -196,6 +219,13 @@ class NarrationJobRepository:
             riff_data_byte_size=metrics.riff_data_byte_size,
             error_category=None,
             error_message=None,
+            speaker_similarity=diagnostics.get("similarity"),
+            speaker_similarity_reference_identity=diagnostics.get(
+                "reference_identity"
+            ),
+            speaker_similarity_policy_version=diagnostics.get("policy_version"),
+            speaker_identity_status=diagnostics.get("status"),
+            speaker_embedding_seconds=diagnostics.get("embedding_seconds"),
         )
 
     def mark_chunk_candidate_failed(
@@ -419,6 +449,15 @@ class NarrationJobRepository:
             "riff_data_byte_size": candidate.riff_data_byte_size,
             "error_category": candidate.error_category,
             "error_message": candidate.error_message,
+            "speaker_similarity": candidate.speaker_similarity,
+            "speaker_similarity_reference_identity": (
+                candidate.speaker_similarity_reference_identity
+            ),
+            "speaker_similarity_policy_version": (
+                candidate.speaker_similarity_policy_version
+            ),
+            "speaker_identity_status": candidate.speaker_identity_status,
+            "speaker_embedding_seconds": candidate.speaker_embedding_seconds,
         }
 
     @staticmethod
@@ -488,4 +527,13 @@ class NarrationJobRepository:
             riff_data_byte_size=row["riff_data_byte_size"],
             error_category=row["error_category"],
             error_message=row["error_message"],
+            speaker_similarity=row["speaker_similarity"],
+            speaker_similarity_reference_identity=row[
+                "speaker_similarity_reference_identity"
+            ],
+            speaker_similarity_policy_version=row[
+                "speaker_similarity_policy_version"
+            ],
+            speaker_identity_status=row["speaker_identity_status"],
+            speaker_embedding_seconds=row["speaker_embedding_seconds"],
         )

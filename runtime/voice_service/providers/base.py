@@ -3,6 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+import numpy as np
+from numpy.typing import NDArray
+
 from voice_service.domain import AudioChunk, GenerationProfile, VoiceProfile
 
 
@@ -41,6 +44,14 @@ class TTSProvider(Protocol):
         generation_profile: GenerationProfile,
         seed: int,
     ) -> AudioChunk: ...
+
+    def speaker_similarity(
+        self, audio: AudioChunk, voice_profile: VoiceProfile
+    ) -> float: ...
+
+    def extract_speaker_embedding(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> NDArray[np.float32]: ...
 
     def metadata(self) -> ProviderMetadata: ...
 

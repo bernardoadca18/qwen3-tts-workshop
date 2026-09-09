@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 from voice_service.core.config import Settings
 from voice_service.domain import AudioChunk, GenerationProfile, VoiceProfile
 from voice_service.providers import ProviderError, ProviderMetadata
@@ -84,6 +85,16 @@ class FakeTTSProvider:
             initialized=self.initialized,
             cuda_available=False,
         )
+
+    def speaker_similarity(
+        self, audio: AudioChunk, voice_profile: VoiceProfile
+    ) -> float:
+        return 0.999
+
+    def extract_speaker_embedding(
+        self, audio: NDArray[np.float32], sample_rate: int
+    ) -> NDArray[np.float32]:
+        return np.ones(2048, dtype=np.float32)
 
     async def shutdown(self) -> None:
         self.shutdown_called = True

@@ -5,6 +5,10 @@ an internal provider implementation; callers use versioned voice and generation
 profiles plus durable narration jobs. Kokoro, Seed-VC, pronunciation rewriting,
 final video mastering and Orchestrator integration are intentionally absent.
 
+The production freeze remains `bernardo_xvec_v2` + `narration_v2`. Experimental
+`bernardo_icl_candidate_v1` and `narration_nonstreaming_v1` profiles are registered under new
+identities for reproducible comparison; neither is a production default.
+
 ## Architecture
 
 The FastAPI lifespan validates typed settings, opens SQLite, validates configured
@@ -63,6 +67,12 @@ exposes entry/hit/miss/eviction counters without reference paths or tensor conte
 A restart remains the explicit invalidation mechanism for registered prompts. GET /v1/voices
 returns safe metadata and never host paths.
 
+Generated physical chunks also receive a lightweight speaker-embedding comparison using the
+already loaded Qwen speaker encoder and the frozen profile reference. Policy
+`qwen_ecapa_warning_v1` reports score/reference identity/status per chunk and min/median/low-score
+summaries per job. Its calibrated `0.985` threshold is warning-only: overlapping distributions and
+whole-block averaging do not justify automatic rejection. No second acoustic model is loaded.
+
 ## Generation profiles
 
 config/generation_profiles.yaml contains internal Qwen controls. The stable API
@@ -90,6 +100,9 @@ curl http://localhost:8889/health/ready
 `/health/live` responds as soon as the event loop is serving, including while
 the model initializes. `/health/ready` returns HTTP 503 with a safe
 `initializing`/failure reason until provider, profiles and worker are usable.
+Readiness includes separate model-load, registered-voice preparation, optional warmup and total
+ready-time metrics. Job metadata separately records queue wait, prompt preparation/cache hit,
+inference time, output duration/RTF, seed, language, profiles and model revision.
 Successful `GET /v1/narrations/<job-id>` status polls are filtered from the INFO
 access log so model/chunk/guard/completion events remain visible; polling errors,
 artifact requests and health requests are still logged normally.
@@ -271,6 +284,10 @@ Faster-Whisper coverage, pause/transient diagnostics and an empty human-review r
 explicit opt-in `backend/scripts/benchmark_clone_modes.py` command documented in the
 Orchestrator's `backend/docs/NARRATION_HARDENING.md`. Whisper remains outside this provider's
 runtime dependency set and no benchmark chooses a winning voice automatically.
+
+`scripts/benchmark_speaker_similarity.py --existing-only` calibrates already existing WAVs without
+generating speech. The 2026-09-09 production decisions and official-upstream classification are
+recorded in [`docs/upstream_audit_2026-09-09.md`](docs/upstream_audit_2026-09-09.md).
 
 The direct real-model smoke is opt-in and never part of pytest:
 

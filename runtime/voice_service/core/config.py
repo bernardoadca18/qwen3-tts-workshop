@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     chunk_min_peak_amplitude: float = Field(default=1e-6, gt=0, le=1)
     job_retention_hours: int = Field(default=168, ge=1)
     max_ephemeral_prompt_cache_entries: int = Field(default=8, ge=1, le=128)
+    speaker_identity_diagnostics_enabled: bool = True
+    speaker_similarity_warning_threshold: float = Field(default=0.985, ge=-1, le=1)
 
     output_directory: Path = Path("data/outputs")
     job_database_path: Path = Path("data/jobs/narrations.sqlite3")

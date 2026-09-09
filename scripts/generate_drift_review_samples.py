@@ -17,21 +17,17 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
-import shutil
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 # Add runtime to path when running in container
 sys.path.insert(0, "/app/runtime")
 
 import numpy as np
 import soundfile as sf
-
 
 # Production baseline
 VOICE_PROFILE = "bernardo_xvec_v2"
@@ -69,15 +65,24 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 def main():
     parser = argparse.ArgumentParser(description="Generate speaker drift review samples")
     parser.add_argument("--output-dir", type=Path, help="Output directory")
-    parser.add_argument("--sample-count", type=int, default=10, help="Number of samples to generate")
+    parser.add_argument(
+        "--sample-count",
+        type=int,
+        default=10,
+        help="Number of samples to generate",
+    )
     args = parser.parse_args()
 
     # Import voice service components
-    from voice_service.config.profiles import load_voice_profile, load_generation_profile
+    from voice_service.config.profiles import load_generation_profile, load_voice_profile
     from voice_service.providers.qwen import Qwen3TTSModel, QwenConfig
 
     # Create run ID
-    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + hex(random.randint(0, 0xFFFFFF))[2:].zfill(6)
+    run_id = (
+        datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        + "-"
+        + hex(random.randint(0, 0xFFFFFF))[2:].zfill(6)
+    )
 
     # Create output directory
     if args.output_dir:
@@ -144,7 +149,10 @@ def main():
             # Compute similarity
             similarity = cosine_similarity(generated_embedding, reference_embedding)
 
-            print(f"  Duration: {duration_seconds:.2f}s, Similarity: {similarity:.4f}, Time: {elapsed:.1f}s")
+            print(
+                f"  Duration: {duration_seconds:.2f}s, "
+                f"Similarity: {similarity:.4f}, Time: {elapsed:.1f}s"
+            )
 
             manifest_entries.append({
                 "sample_id": sample_id,
@@ -171,7 +179,7 @@ def main():
     manifest_path = output_dir / "manifest.json"
     manifest = {
         "run_id": run_id,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "voice_profile": VOICE_PROFILE,
         "generation_profile": GENERATION_PROFILE,
         "language": LANGUAGE,
@@ -186,7 +194,7 @@ def main():
         "# Speaker Drift Blind Review",
         "",
         f"Run ID: {run_id}",
-        f"Created: {datetime.now(timezone.utc).isoformat()}",
+        f"Created: {datetime.now(UTC).isoformat()}",
         "",
         "For each sample, classify after listening:",
         "",

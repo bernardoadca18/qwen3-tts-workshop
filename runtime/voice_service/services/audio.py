@@ -46,7 +46,7 @@ class SpeakerSimilarityGuardError(AudioValidationError):
         self.diagnostics: dict[str, object] = {}
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+def cosine_similarity(a: NDArray[np.float32], b: NDArray[np.float32]) -> float:
     """Compute cosine similarity between two vectors."""
     norm_a = np.linalg.norm(a)
     norm_b = np.linalg.norm(b)
@@ -56,8 +56,8 @@ def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 
 def validate_speaker_similarity(
-    generated_embedding: np.ndarray,
-    reference_embedding: np.ndarray,
+    generated_embedding: NDArray[np.float32],
+    reference_embedding: NDArray[np.float32],
     threshold: float,
     reference_identity: str,
 ) -> float:

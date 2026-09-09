@@ -180,6 +180,12 @@ def test_frozen_production_profiles_have_expected_contract(tmp_path: Path) -> No
     assert production_voice.identity == (
         "c4e74a0da51bd5fbc18c4d9b0bc5623d2e4ea91ff8d873374b6c1e41632b802b"
     )
+    icl_candidate = voices.get("bernardo_icl_candidate_v1")
+    assert icl_candidate.identity != production_voice.identity
+    assert icl_candidate.clone_mode == "icl"
+    assert icl_candidate.reference_id == production_voice.reference_id
+    assert icl_candidate.audio_sha256 == production_voice.audio_sha256
+    assert icl_candidate.transcript
 
     generations = GenerationProfileRegistry.load(repository / "config/generation_profiles.yaml")
     historical = generations.get("narration_v1")
@@ -200,6 +206,12 @@ def test_frozen_production_profiles_have_expected_contract(tmp_path: Path) -> No
         "subtalker_top_p": 1.0,
         "subtalker_top_k": 50,
         "max_new_tokens": 2048,
+    }
+    nonstreaming = generations.get("narration_nonstreaming_v1")
+    assert nonstreaming.identity != production_generation.identity
+    assert nonstreaming.parameters == {
+        **production_generation.parameters,
+        "non_streaming_mode": True,
     }
 
 

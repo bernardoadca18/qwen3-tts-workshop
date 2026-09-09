@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from voice_service.domain import GenerationProfile, VoiceProfile
 
@@ -21,6 +21,8 @@ EPHEMERAL_REFERENCE_VERSION = "benchmark_reference_v1"
 
 
 class GenerationControls(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     do_sample: bool = True
     temperature: float = Field(default=0.9, gt=0, le=2)
     top_p: float = Field(default=1.0, gt=0, le=1)
@@ -31,6 +33,7 @@ class GenerationControls(BaseModel):
     subtalker_top_p: float = Field(default=1.0, gt=0, le=1)
     subtalker_top_k: int = Field(default=50, ge=1, le=500)
     max_new_tokens: int = Field(default=2048, ge=64, le=8192)
+    non_streaming_mode: bool | None = None
 
 
 def _sha256_file(path: Path) -> str:
@@ -245,7 +248,7 @@ class GenerationProfileRegistry:
             if not version:
                 raise ProfileConfigurationError(f"generation profile version is missing: {name}")
             controls = GenerationControls.model_validate(config.get("parameters", {}))
-            parameters = controls.model_dump()
+            parameters = controls.model_dump(exclude_none=True)
             profiles[name] = GenerationProfile(
                 name=name,
                 version=version,

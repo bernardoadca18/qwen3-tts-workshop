@@ -8,6 +8,7 @@ from collections import OrderedDict
 from typing import Any
 
 import numpy as np
+from numpy.typing import NDArray
 
 from voice_service.core.config import Settings
 from voice_service.domain import AudioChunk, GenerationProfile, VoiceProfile
@@ -38,7 +39,7 @@ class QwenTTSProvider:
         self._cuda_available: bool | None = None
         self._snapshot_path: str | None = None
         # Reference speaker embeddings cache keyed by voice profile identity.
-        self._reference_embeddings: dict[str, np.ndarray] = {}
+        self._reference_embeddings: dict[str, NDArray[np.float32]] = {}
 
     async def initialize(self) -> None:
         await asyncio.to_thread(self._initialize_sync)
@@ -263,9 +264,9 @@ class QwenTTSProvider:
 
     def extract_speaker_embedding(
         self,
-        audio: np.ndarray,
+        audio: NDArray[np.float32],
         sample_rate: int,
-    ) -> np.ndarray:
+    ) -> NDArray[np.float32]:
         """Extract speaker embedding from audio using Qwen's internal ECAPA-TDNN.
 
         Args:
@@ -280,7 +281,7 @@ class QwenTTSProvider:
         """
         self._require_initialized()
         assert self._model is not None
-        import librosa
+        import librosa  # type: ignore[import-not-found]
 
         # Qwen's speaker encoder requires 24kHz
         target_sr = 24000
@@ -297,14 +298,14 @@ class QwenTTSProvider:
                 embedding_tensor = self._model.model.extract_speaker_embedding(
                     audio, target_sr
                 )
-                return embedding_tensor.cpu().numpy()
+                return np.asarray(embedding_tensor.cpu().numpy(), dtype=np.float32)
         except Exception as exc:
             raise ProviderError("speaker embedding extraction failed") from exc
 
     def get_reference_embedding(
         self,
         voice_profile: VoiceProfile,
-    ) -> np.ndarray:
+    ) -> NDArray[np.float32]:
         """Get or extract reference speaker embedding for a voice profile.
 
         Caches the embedding by voice profile identity to avoid re-extracting
@@ -344,6 +345,17 @@ class QwenTTSProvider:
         )
 
         return embedding
+
+    def speaker_similarity(
+        self, audio: AudioChunk, voice_profile: VoiceProfile
+    ) -> float:
+        """Compare generated speech with its frozen reference using Qwen's encoder."""
+        reference = self.get_reference_embedding(voice_profile)
+        generated = self.extract_speaker_embedding(audio.samples, audio.sample_rate)
+        denominator = float(np.linalg.norm(reference) * np.linalg.norm(generated))
+        if denominator == 0:
+            raise ProviderError("speaker embedding has zero norm")
+        return float(np.dot(reference, generated) / denominator)
 
     def clear_reference_embedding(self, identity: str) -> None:
         """Clear cached reference embedding for a voice profile identity.

@@ -1,0 +1,357 @@
+{
+  "schema": "neovids_speaker_similarity_calibration_v1",
+  "timestamp": "2026-09-09T16:42:10Z",
+  "voice": "bernardo_xvec_v2",
+  "generation": "narration_v2",
+  "reference_audio": "qwen3-tts-workshop/data/references/ref_full_processed_raw.wav",
+  "reference_embedding_dimension": 2048,
+  "extraction_method": "qwen_ecapa_tdnn",
+  "embedding_source": "service_api",
+  "text_length": 38,
+  "results": [
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0000.wav",
+      "similarity": 0.9906581044197083,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0001.wav",
+      "similarity": 0.9917901158332825,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0002.wav",
+      "similarity": 0.9918821454048157,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0003.wav",
+      "similarity": 0.9924405813217163,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0004.wav",
+      "similarity": 0.9910433888435364,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0005.wav",
+      "similarity": 0.991772472858429,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0006.wav",
+      "similarity": 0.9925104975700378,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0007.wav",
+      "similarity": 0.9911619424819946,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0008.wav",
+      "similarity": 0.9907159209251404,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0009.wav",
+      "similarity": 0.9918678998947144,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0010.wav",
+      "similarity": 0.9905902147293091,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0011.wav",
+      "similarity": 0.9915061593055725,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0012.wav",
+      "similarity": 0.9904735684394836,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0013.wav",
+      "similarity": 0.9932296872138977,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0014.wav",
+      "similarity": 0.9879829287528992,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "good",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/1ee67bff4476490b9476011ca83c1eba/chunk_0015.wav",
+      "similarity": 0.9913977980613708,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0000.wav",
+      "similarity": 0.9689012169837952,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0001.wav",
+      "similarity": 0.9913721680641174,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0002.wav",
+      "similarity": 0.9918085932731628,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0003.wav",
+      "similarity": 0.9922351241111755,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0004.wav",
+      "similarity": 0.9934261441230774,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0005.wav",
+      "similarity": 0.991975724697113,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0006.wav",
+      "similarity": 0.9808531403541565,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0007.wav",
+      "similarity": 0.9916385412216187,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0008.wav",
+      "similarity": 0.9917494058609009,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0009.wav",
+      "similarity": 0.9914937615394592,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0010.wav",
+      "similarity": 0.9919533133506775,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0011.wav",
+      "similarity": 0.9919278025627136,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0012.wav",
+      "similarity": 0.9902895092964172,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0013.wav",
+      "similarity": 0.9920070767402649,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0014.wav",
+      "similarity": 0.9915139079093933,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    },
+    {
+      "seed": null,
+      "category": "bad",
+      "repetition": 0,
+      "status": "completed",
+      "audio_path": "qwen3-tts-workshop/data/outputs/chunks/98e26eb3501146f6870b5d9de57bd54e/chunk_0015.wav",
+      "similarity": 0.9919970631599426,
+      "embedding_dimension": 2048,
+      "source": "existing_wav"
+    }
+  ],
+  "analysis": {
+    "good": {
+      "count": 16,
+      "mean": 0.9913139641284943,
+      "std": 0.001137199138929495,
+      "min": 0.9879829287528992,
+      "max": 0.9932296872138977
+    },
+    "bad": {
+      "count": 16,
+      "mean": 0.9896964058279991,
+      "std": 0.006015819407269019,
+      "min": 0.9689012169837952,
+      "max": 0.9934261441230774
+    },
+    "threshold_recommendation": {
+      "value": 0.9879829287528992,
+      "method": "conservative_min_good",
+      "rationale": "Overlapping distributions - threshold at minimum good value",
+      "min_good": 0.9879829287528992,
+      "max_bad": 0.9934261441230774,
+      "warning": "Distributions overlap - manual review recommended"
+    }
+  }
+}

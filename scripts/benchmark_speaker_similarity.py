@@ -14,13 +14,16 @@ speaker encoder over HTTP.
 
 Usage:
     # Dry-run (plan only)
-    python scripts/benchmark_speaker_similarity.py --text "Teste de áudio" --output /data/audio/benchmarks/speaker-similarity
+    python scripts/benchmark_speaker_similarity.py --text "Teste de áudio" \
+        --output /data/audio/benchmarks/speaker-similarity
 
     # Execute benchmark
-    python scripts/benchmark_speaker_similarity.py --run --text "Teste de áudio" --output /data/audio/benchmarks/speaker-similarity
+    python scripts/benchmark_speaker_similarity.py --run --text "Teste de áudio" \
+        --output /data/audio/benchmarks/speaker-similarity
 
     # With suspected bad seeds
-    python scripts/benchmark_speaker_similarity.py --run --text "Teste de áudio" --bad-seeds 61 101 --output /data/audio/benchmarks/speaker-similarity
+    python scripts/benchmark_speaker_similarity.py --run --text "Teste de áudio" \
+        --bad-seeds 61 101 --output /data/audio/benchmarks/speaker-similarity
 
     # With existing WAV files (no generation needed for those categories)
     python scripts/benchmark_speaker_similarity.py --run --text "Teste de áudio" \
@@ -33,14 +36,12 @@ from __future__ import annotations
 import argparse
 import json
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
-import urllib.request
-import urllib.error
-
 import numpy as np
-import soundfile as sf
 
 
 @dataclass(frozen=True)
@@ -73,8 +74,6 @@ def extract_speaker_embedding_via_api(
     This reuses the already-loaded Qwen model inside the running voice service —
     no second model is loaded.
     """
-    import email.generator
-    import email.message
     import io
 
     boundary = "----WebKitFormBoundarySpeakerEmbed"
@@ -84,7 +83,11 @@ def extract_speaker_embedding_via_api(
     # Build multipart/form-data body
     body = io.BytesIO()
     body.write(f"--{boundary}\r\n".encode())
-    body.write(f'Content-Disposition: form-data; name="audio"; filename="{Path(audio_path).name}"\r\n'.encode())
+    disposition = (
+        'Content-Disposition: form-data; name="audio"; '
+        f'filename="{Path(audio_path).name}"\r\n'
+    )
+    body.write(disposition.encode())
     body.write(b"Content-Type: audio/wav\r\n\r\n")
     body.write(audio_bytes)
     body.write(f"\r\n--{boundary}--\r\n".encode())
@@ -116,7 +119,11 @@ def load_embedding_from_file(path: Path) -> np.ndarray:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Speaker similarity calibration benchmark")
-    parser.add_argument("--base-url", default="http://localhost:8889", help="Qwen voice service URL")
+    parser.add_argument(
+        "--base-url",
+        default="http://localhost:8889",
+        help="Qwen voice service URL",
+    )
     parser.add_argument("--voice", default="bernardo_xvec_v2", help="Voice profile name")
     parser.add_argument("--generation", default="narration_v2", help="Generation profile name")
     parser.add_argument("--text", required=True, help="Text to synthesize")
@@ -154,11 +161,13 @@ def main() -> None:
         help="Output directory",
     )
     parser.add_argument("--run", action="store_true", help="Execute benchmark (default is dry-run)")
+    parser.add_argument(
+        "--existing-only",
+        action="store_true",
+        help="Analyze only --good-wav/--bad-wav inputs without new synthesis",
+    )
     parser.add_argument("--repetitions", type=int, default=1, help="Repetitions per seed")
     args = parser.parse_args()
-
-    has_good = bool(args.good_seeds or args.good_wav)
-    has_bad = bool(args.bad_seeds or args.bad_wav)
 
     # Plan mode
     if not args.run:
@@ -172,7 +181,11 @@ def main() -> None:
             "good_wav": [str(p) for p in args.good_wav],
             "bad_wav": [str(p) for p in args.bad_wav],
             "repetitions": args.repetitions,
-            "total_generations": (len(args.good_seeds) + len(args.bad_seeds)) * args.repetitions,
+            "total_generations": (
+                0
+                if args.existing_only
+                else (len(args.good_seeds) + len(args.bad_seeds)) * args.repetitions
+            ),
             "total_wav_files": len(args.good_wav) + len(args.bad_wav),
             "output": str(args.output),
             "embedding_source": "service_api",
@@ -222,7 +235,7 @@ def main() -> None:
     def process_existing_wav(wav_path: Path, category: str) -> None:
         print(f"Processing existing {category} WAV: {wav_path}...")
         if not wav_path.exists():
-            print(f"  SKIP: file not found")
+            print("  SKIP: file not found")
             return
         emb = extract_speaker_embedding_via_api(args.base_url, str(wav_path))
         similarity = cosine_similarity(ref_vector, emb.vector)
@@ -277,7 +290,7 @@ def main() -> None:
         with urllib.request.urlopen(audio_url, timeout=60) as resp:
             audio_path.write_bytes(resp.read())
 
-        print(f"  Extracting embedding via service API...")
+        print("  Extracting embedding via service API...")
         emb = extract_speaker_embedding_via_api(args.base_url, str(audio_path))
         similarity = cosine_similarity(ref_vector, emb.vector)
         print(f"  Similarity: {similarity:.6f}")
@@ -303,16 +316,25 @@ def main() -> None:
         process_existing_wav(wav_path, "bad")
 
     # Generated seeds
-    for seed in args.good_seeds:
-        for rep in range(args.repetitions):
-            process_generated_seed(seed, "good", rep)
-    for seed in args.bad_seeds:
-        for rep in range(args.repetitions):
-            process_generated_seed(seed, "bad", rep)
+    if not args.existing_only:
+        for seed in args.good_seeds:
+            for rep in range(args.repetitions):
+                process_generated_seed(seed, "good", rep)
+        for seed in args.bad_seeds:
+            for rep in range(args.repetitions):
+                process_generated_seed(seed, "bad", rep)
 
     # Analyze results
-    good_similarities = [r["similarity"] for r in results if r["category"] == "good" and "similarity" in r]
-    bad_similarities = [r["similarity"] for r in results if r["category"] == "bad" and "similarity" in r]
+    good_similarities = [
+        r["similarity"]
+        for r in results
+        if r["category"] == "good" and "similarity" in r
+    ]
+    bad_similarities = [
+        r["similarity"]
+        for r in results
+        if r["category"] == "bad" and "similarity" in r
+    ]
 
     analysis = {
         "schema": "neovids_speaker_similarity_calibration_v1",

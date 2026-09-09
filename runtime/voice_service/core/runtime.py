@@ -32,6 +32,13 @@ class RuntimeState:
         self.generations: GenerationProfileRegistry | None = None
         self.ready = False
         self.initialization_error: str | None = None
+        self.startup_metrics: dict[str, float | bool | None] = {
+            "model_load_seconds": None,
+            "voice_prepare_seconds": None,
+            "warmup_seconds": None,
+            "warmup_enabled": settings.warmup_enabled,
+            "ready_after_seconds": None,
+        }
 
     async def initialize(self) -> None:
         started = time.monotonic()
@@ -48,16 +55,26 @@ class RuntimeState:
             generations.get(self.settings.default_generation_profile)
             provider = self.provider_factory(self.settings)
             self.provider = provider
+            model_started = time.monotonic()
             await provider.initialize()
+            self.startup_metrics["model_load_seconds"] = time.monotonic() - model_started
+            voices_started = time.monotonic()
             for profile in voices.all():
                 await provider.prepare_voice(profile)
+            self.startup_metrics["voice_prepare_seconds"] = (
+                time.monotonic() - voices_started
+            )
             if self.settings.warmup_enabled:
+                warmup_started = time.monotonic()
                 await provider.generate(
                     text=self.settings.warmup_text,
                     language="Portuguese",
                     voice_profile=voices.get(self.settings.default_voice_profile),
                     generation_profile=generations.get(self.settings.default_generation_profile),
                     seed=1,
+                )
+                self.startup_metrics["warmup_seconds"] = (
+                    time.monotonic() - warmup_started
                 )
             service = NarrationService(
                 settings=self.settings,
@@ -75,6 +92,7 @@ class RuntimeState:
             self.voices = voices
             self.generations = generations
             self.ready = True
+            self.startup_metrics["ready_after_seconds"] = time.monotonic() - started
             logger.info(
                 "voice service ready model=%s revision=%s device=%s dtype=%s "
                 "attention=%s voices=%s initialization_seconds=%.3f",
@@ -84,7 +102,7 @@ class RuntimeState:
                 self.settings.dtype,
                 self.settings.attention_impl,
                 [profile.name for profile in voices.all()],
-                time.monotonic() - started,
+                self.startup_metrics["ready_after_seconds"],
             )
         except Exception:
             self.initialization_error = "initialization_failed"
