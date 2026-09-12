@@ -32,3 +32,11 @@ voice_profiles:
     reference_sha256: 8856924e05f76d1a3a5b8554218f80b5e1a898aebfe211ec1b65b60eabdbc70b
     reference_text: /data/references/ref.txt
     clone_mode: icl
+   bernardo_xvec_vf_candidate_v1:
+    # Candidate A/B: same production reference after Voice Factory
+    # gain-only normalization. Do not promote without human listening.
+    version: "1"
+    reference_id: ref_full_processed_raw_normalized.wav
+    reference_audio: /data/references/ref_full_processed_raw_normalized.wav
+    reference_sha256: 11b7b30c41c3d365c4122a1549cd505d16876219f75fa213f87fa15e341be546
+    clone_mode: x_vector_only
