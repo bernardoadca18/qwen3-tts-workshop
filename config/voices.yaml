@@ -32,7 +32,7 @@ voice_profiles:
     reference_sha256: 8856924e05f76d1a3a5b8554218f80b5e1a898aebfe211ec1b65b60eabdbc70b
     reference_text: /data/references/ref.txt
     clone_mode: icl
-   bernardo_xvec_vf_candidate_v1:
+  bernardo_xvec_vf_candidate_v1:
     # Candidate A/B: same production reference after Voice Factory
     # gain-only normalization. Do not promote without human listening.
     version: "1"
