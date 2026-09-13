@@ -34,7 +34,7 @@ services:
       VOICE_PROFILES_FILE: /app/config/voices.yaml
       GENERATION_PROFILES_FILE: /app/config/generation_profiles.yaml
       REFERENCES_DIRECTORY: /data/references
-      DEFAULT_VOICE_PROFILE: ${DEFAULT_VOICE_PROFILE:-bernardo_xvec_v2}
+      DEFAULT_VOICE_PROFILE: ${DEFAULT_VOICE_PROFILE:-bernardo_xvec_v3}
       DEFAULT_GENERATION_PROFILE: ${DEFAULT_GENERATION_PROFILE:-narration_v2}
       MAX_QUEUE_SIZE: ${MAX_QUEUE_SIZE:-32}
       MAX_TEXT_CHARS: ${MAX_TEXT_CHARS:-50000}
