@@ -183,8 +183,10 @@ def test_frozen_production_profiles_have_expected_contract(tmp_path: Path) -> No
     icl_candidate = voices.get("bernardo_icl_candidate_v1")
     assert icl_candidate.identity != production_voice.identity
     assert icl_candidate.clone_mode == "icl"
-    assert icl_candidate.reference_id == production_voice.reference_id
-    assert icl_candidate.audio_sha256 == production_voice.audio_sha256
+    assert icl_candidate.reference_id == "ref_full_processed_raw.wav"
+    assert icl_candidate.audio_sha256 == (
+        "8856924e05f76d1a3a5b8554218f80b5e1a898aebfe211ec1b65b60eabdbc70b"
+    )
     assert icl_candidate.transcript
 
     generations = GenerationProfileRegistry.load(repository / "config/generation_profiles.yaml")
