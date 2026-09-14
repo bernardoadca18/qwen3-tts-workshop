@@ -1,17 +1,17 @@
 # Production Voice Baseline
 
 Status: frozen for production workflow validation  
-Date: 2026-08-29
+Date: 2026-09-13
 
 ## Canonical configuration
 
 - Model: `Qwen/Qwen3-TTS-12Hz-1.7B-Base`
 - Revision: `fd4b254389122332181a7c3db7f27e918eec64e3`
 - Runtime: `cuda:0`, `float16`, `sdpa`
-- Voice profile: `bernardo_xvec_v2`
-- Voice identity: `c4e74a0da51bd5fbc18c4d9b0bc5623d2e4ea91ff8d873374b6c1e41632b802b`
-- Reference: `ref_full_processed_raw.wav`
-- Reference SHA-256: `8856924e05f76d1a3a5b8554218f80b5e1a898aebfe211ec1b65b60eabdbc70b`
+- Voice profile: `bernardo_xvec_v3`
+- Voice identity: `bf047b087b09e7a2566a1282a8a9eeb4a043ef44051b2030859ca94ae46dde4f`
+- Reference: `ref_full_processed_raw_normalized.wav`
+- Reference SHA-256: `11b7b30c41c3d365c4122a1549cd505d16876219f75fa213f87fa15e341be546`
 - Clone mode: `x_vector_only` (no reference transcript)
 - Generation profile: `narration_v2`
 - Generation identity: `e5433e1cb8b20f91913ad37763b891f3b327a50be2f5c7d09e9a5fdaa97f05d7`
@@ -21,7 +21,8 @@ Date: 2026-08-29
   `subtalker_temperature=0.90`, `subtalker_top_p=1.0`, `subtalker_top_k=50`,
   `max_new_tokens=2048`.
 
-The old voice and generation profiles remain registered and immutable for historical
+The old voice and generation profiles, including `bernardo_xvec_v2`, remain registered and
+immutable for historical
 reproduction. Profile names, versions, reference bytes, model revision and controls produce new
 canonical identities. Startup fails closed if the frozen reference no longer matches its declared
 digest.

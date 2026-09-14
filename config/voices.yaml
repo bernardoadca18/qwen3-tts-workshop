@@ -23,9 +23,8 @@ voice_profiles:
     clone_mode: x_vector_only
 
   bernardo_icl_candidate_v1:
-    # Experimental only. The transcript was checked against the processed
-    # production reference (ASR normalized similarity 0.9888); production stays
-    # on bernardo_xvec_v2 until a blind quality benchmark explicitly promotes it.
+    # Historical experimental candidate. At its 2026-09-09 evaluation the
+    # production baseline was bernardo_xvec_v2; V3 was promoted later.
     version: "1"
     reference_id: ref_full_processed_raw.wav
     reference_audio: /data/references/ref_full_processed_raw.wav

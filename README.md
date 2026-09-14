@@ -5,7 +5,7 @@ an internal provider implementation; callers use versioned voice and generation
 profiles plus durable narration jobs. Kokoro, Seed-VC, pronunciation rewriting,
 final video mastering and Orchestrator integration are intentionally absent.
 
-The production freeze remains `bernardo_xvec_v2` + `narration_v2`. Experimental
+The production freeze is `bernardo_xvec_v3` + `narration_v2`. Experimental
 `bernardo_icl_candidate_v1` and `narration_nonstreaming_v1` profiles are registered under new
 identities for reproducible comparison; neither is a production default.
 
@@ -57,7 +57,7 @@ reference audio. It deliberately has no transcript: Qwen receives `ref_text=None
 reference speech codes from the prompt item and conditions on the speaker embedding only. Clone
 mode and transcript semantics participate in profile identity, so ICL and x-vector prompts cannot
 share cache entries. `bernardo_v1` and `bernardo_xvec_v1` remain available for reproduction.
-The production default is the frozen `bernardo_xvec_v2` profile; its configured reference digest
+The production default is the frozen `bernardo_xvec_v3` profile; its configured reference digest
 is verified at startup and its transcript-free x-vector semantics cannot silently fall back to ICL.
 
 The Qwen prompt is cached by this identity and is not recomputed per narration. Registered profile
@@ -123,7 +123,7 @@ curl -i -X POST http://localhost:8889/v1/narrations \
   -d '{
     "text": "Geralt aprende o sinal Aard.",
     "language": "Portuguese",
-    "voice_profile": "bernardo_xvec_v2",
+    "voice_profile": "bernardo_xvec_v3",
     "generation_profile": "narration_v2",
     "seed": 303
   }'

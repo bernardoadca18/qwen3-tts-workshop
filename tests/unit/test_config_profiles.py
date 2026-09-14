@@ -169,16 +169,16 @@ def test_frozen_production_profiles_have_expected_contract(tmp_path: Path) -> No
         model_revision=settings.model_revision,
     )
     production_voice = voices.get(settings.default_voice_profile)
-    assert production_voice.name == "bernardo_xvec_v2"
-    assert production_voice.reference_id == "ref_full_processed_raw.wav"
+    assert production_voice.name == "bernardo_xvec_v3"
+    assert production_voice.reference_id == "ref_full_processed_raw_normalized.wav"
     assert production_voice.audio_sha256 == (
-        "8856924e05f76d1a3a5b8554218f80b5e1a898aebfe211ec1b65b60eabdbc70b"
+        "11b7b30c41c3d365c4122a1549cd505d16876219f75fa213f87fa15e341be546"
     )
     assert production_voice.clone_mode == "x_vector_only"
     assert production_voice.transcript is None
     assert production_voice.transcript_sha256 is None
     assert production_voice.identity == (
-        "c4e74a0da51bd5fbc18c4d9b0bc5623d2e4ea91ff8d873374b6c1e41632b802b"
+        "bf047b087b09e7a2566a1282a8a9eeb4a043ef44051b2030859ca94ae46dde4f"
     )
     icl_candidate = voices.get("bernardo_icl_candidate_v1")
     assert icl_candidate.identity != production_voice.identity
