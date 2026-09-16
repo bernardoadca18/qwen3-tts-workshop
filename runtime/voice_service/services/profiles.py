@@ -99,6 +99,39 @@ class VoiceProfileRegistry:
         for name, config in raw.items():
             if not isinstance(name, str) or not isinstance(config, dict):
                 raise ProfileConfigurationError("invalid voice profile entry")
+            if config.get("required") is False:
+                audio = Path(str(config["reference_audio"]))
+                transcript = (
+                    Path(str(config["reference_text"])) if config.get("reference_text") else None
+                )
+                assets = [audio] + ([transcript] if transcript is not None else [])
+                # Skip only absent assets. Validate every asset that is present,
+                # even when its companion has not yet been supplied.
+                missing = []
+                for asset in assets:
+                    try:
+                        asset.lstat()
+                    except FileNotFoundError:
+                        missing.append(asset)
+                if missing:
+                    if transcript is not None and transcript not in missing:
+                        try:
+                            if not transcript.read_text(encoding="utf-8").strip():
+                                raise ProfileConfigurationError(
+                                    f"voice profile transcript is empty: {name}"
+                                )
+                        except (OSError, UnicodeError) as exc:
+                            raise ProfileConfigurationError(
+                                f"voice profile is unreadable: {name}"
+                            ) from exc
+                    if audio not in missing:
+                        cls._load_one(
+                            name,
+                            {**config, "clone_mode": "x_vector_only"},
+                            model_id,
+                            model_revision,
+                        )
+                    continue
             profiles[name] = cls._load_one(name, config, model_id, model_revision)
         return cls(profiles)
 

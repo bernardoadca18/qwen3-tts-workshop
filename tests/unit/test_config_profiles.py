@@ -237,3 +237,40 @@ def test_configured_reference_digest_mismatch_fails_closed(
             model_id=configured_settings.model_id,
             model_revision=configured_settings.model_revision,
         )
+
+
+def test_optional_english_assets_do_not_break_required_registry(configured_settings, tmp_path):
+    # Fake unit-test assets only; no operator reference is created or synthesized.
+    config = yaml.safe_load(configured_settings.voice_profiles_file.read_text())
+    en_audio = tmp_path / "optional.wav"
+    en_text = tmp_path / "optional.txt"
+    config["voice_profiles"]["optional_en"] = {
+        "version": "1",
+        "required": False,
+        "reference_audio": str(en_audio),
+        "reference_text": str(en_text),
+        "clone_mode": "icl",
+    }
+    path = tmp_path / "optional.yaml"
+    path.write_text(yaml.safe_dump(config))
+
+    def load():
+        return VoiceProfileRegistry.load(
+            path,
+            model_id=configured_settings.model_id,
+            model_revision=configured_settings.model_revision,
+        )
+
+    baseline = load().get("test_voice").identity
+    assert [voice.name for voice in load().all()] == ["test_voice"]
+    en_text.write_text("A matching test transcript.")
+    assert load().get("test_voice").identity == baseline
+    en_audio.write_bytes(b"invalid wav")
+    with pytest.raises(ProfileConfigurationError):
+        load()
+    source = Path(config["voice_profiles"]["test_voice"]["reference_audio"])
+    en_audio.write_bytes(source.read_bytes())
+    assert load().get("optional_en").clone_mode == "icl"
+    en_text.write_text("")
+    with pytest.raises(ProfileConfigurationError, match="empty"):
+        load()
