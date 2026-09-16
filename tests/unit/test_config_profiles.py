@@ -274,3 +274,35 @@ def test_optional_english_assets_do_not_break_required_registry(configured_setti
     en_text.write_text("")
     with pytest.raises(ProfileConfigurationError, match="empty"):
         load()
+
+
+def test_optional_xvec_candidates_need_only_wav(configured_settings, tmp_path):
+    repository = Path(__file__).resolve().parents[2]
+    configured = yaml.safe_load((repository / "config/voices.yaml").read_text())["voice_profiles"]
+    assert configured["bernardo_xvec_v3"]["clone_mode"] == "x_vector_only"
+    assert "required" not in configured["bernardo_xvec_v3"]
+    raw = yaml.safe_load(configured_settings.voice_profiles_file.read_text())
+    fake_audio = raw["voice_profiles"]["test_voice"]["reference_audio"]
+    candidates = ("bernardo_pt_xvec_candidate_v1", "bernardo_en_xvec_v1")
+    for name in candidates:
+        assert configured[name]["clone_mode"] == "x_vector_only"
+        assert configured[name]["required"] is False
+        assert "reference_text" not in configured[name]
+        raw["voice_profiles"][name] = {**configured[name], "reference_audio": str(tmp_path / (name + ".wav"))}
+    config = tmp_path / "optional-xvec.yaml"
+
+    def load():
+        config.write_text(yaml.safe_dump(raw))
+        return VoiceProfileRegistry.load(config, model_id=configured_settings.model_id, model_revision=configured_settings.model_revision)
+
+    registry = load()
+    assert [profile.name for profile in registry.all()] == ["test_voice"]
+    identity = registry.get("test_voice").identity
+    # Reuse the existing fake fixture path, never any operator reference.
+    for name in candidates:
+        raw["voice_profiles"][name]["reference_audio"] = fake_audio
+    registry = load()
+    assert registry.get("test_voice").identity == identity
+    for name in candidates:
+        assert registry.get(name).clone_mode == "x_vector_only"
+        assert registry.get(name).transcript is None

@@ -49,10 +49,16 @@ voice_profiles:
     reference_sha256: 11b7b30c41c3d365c4122a1549cd505d16876219f75fa213f87fa15e341be546
     clone_mode: x_vector_only
 
-  bernardo_en_icl_v1:
+  bernardo_en_xvec_v1:
     version: "1"
     required: false
     reference_id: ref_en_full_processed_raw_normalized.wav
     reference_audio: /data/references/ref_en_full_processed_raw_normalized.wav
-    reference_text: /data/references/ref_en_full_processed_raw_normalized.txt
-    clone_mode: icl
+    clone_mode: x_vector_only
+
+  bernardo_pt_xvec_candidate_v1:
+    version: "1"
+    required: false
+    reference_id: ref_pt_candidate_processed_raw_normalized.wav
+    reference_audio: /data/references/ref_pt_candidate_processed_raw_normalized.wav
+    clone_mode: x_vector_only
