@@ -84,3 +84,28 @@ voice_profiles:
     reference_audio: /data/references/ref_en_us_xvec_reserve_v1.wav
     reference_sha256: a29f4e337bc1b41ba7bf2650290857a22581531717b92088b10226aabdf728cc
     clone_mode: x_vector_only
+
+  bernardo_pt_icl_v1:
+    # PT-BR production profile using ICL (in-context learning) clone mode.
+    # Conditions Qwen on both speaker embedding and reference transcript.
+    # Promoted to production 2026-09-27 after auditory evaluation.
+    version: "1"
+    required: true
+    reference_id: ref_pt_br_xvec_v4.wav
+    reference_audio: /data/references/ref_pt_br_xvec_v4.wav
+    reference_sha256: 6d2df3e475cf58c7c14a5e70f8b345837a965c159dc6d79d4e8204d1e535dde7
+    reference_text: /data/references/ref_pt_br_xvec_v4.txt
+    clone_mode: icl
+
+  bernardo_en_icl_v1:
+    # Experimental ICL profile for A/B comparison against x-vector.
+    # Uses the same EN-US production reference as bernardo_en_xvec_v2,
+    # but conditions Qwen on the transcript as well as the speaker embedding.
+    # DO NOT promote to production without human evaluation.
+    version: "1"
+    required: false
+    reference_id: ref_en_us_xvec_v2.wav
+    reference_audio: /data/references/ref_en_us_xvec_v2.wav
+    reference_sha256: a2b84a1596e64f69cc81bde39e6fa2efe7823318f655f4ca39ad1f1082d7b52a
+    reference_text: /data/references/ref_en_us_xvec_v2.txt
+    clone_mode: icl

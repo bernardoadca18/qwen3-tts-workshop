@@ -12,13 +12,23 @@ PT winner: PT_A. EN primary winner: EN_B. EN reserve: EN_A.
 
 ## PT-BR production
 
+- Profile: `bernardo_pt_icl_v1`
+- Reference: `ref_pt_br_xvec_v4.wav`
+- Reference transcript: `ref_pt_br_xvec_v4.txt`
+- SHA-256: `6d2df3e475cf58c7c14a5e70f8b345837a965c159dc6d79d4e8204d1e535dde7`
+- Clone mode: `icl`
+- Language: `Portuguese`
+- Default: YES; required production asset.
+
+## PT-BR previous production
+
 - Profile: `bernardo_xvec_v4`
 - Reference: `ref_pt_br_xvec_v4.wav`
 - SHA-256: `6d2df3e475cf58c7c14a5e70f8b345837a965c159dc6d79d4e8204d1e535dde7`
 - Voice identity (VoiceProfileRegistry): `dbffe30a63d4db53f6035005b542034ba36fb7e5f5f6b65f66b3f2c32c014c22`
 - Clone mode: `x_vector_only`; no reference transcript.
 - Language: `Portuguese`
-- Default: YES; required production asset.
+- Default: NO; historical baseline retained for comparison and rollback.
 
 ## EN-US production
 
