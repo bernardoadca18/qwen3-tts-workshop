@@ -5,8 +5,8 @@ an internal provider implementation; callers use versioned voice and generation
 profiles plus durable narration jobs. Kokoro, Seed-VC, pronunciation rewriting,
 final video mastering and Orchestrator integration are intentionally absent.
 
-The production freeze is `bernardo_xvec_v4` + `narration_v2`. Experimental
-`bernardo_icl_candidate_v1` and `narration_nonstreaming_v1` profiles are registered under new
+The production freeze is `bernardo_pt_icl_v1` (PT-BR) + `bernardo_en_xvec_v2` (EN-US) + `narration_v2`.
+Experimental `bernardo_icl_candidate_v1` and `narration_nonstreaming_v1` profiles are registered under new
 identities for reproducible comparison; neither is a production default.
 
 ## Architecture
@@ -57,8 +57,9 @@ reference audio. It deliberately has no transcript: Qwen receives `ref_text=None
 reference speech codes from the prompt item and conditions on the speaker embedding only. Clone
 mode and transcript semantics participate in profile identity, so ICL and x-vector prompts cannot
 share cache entries. `bernardo_v1` and `bernardo_xvec_v1` remain available for reproduction.
-The production default is the frozen `bernardo_xvec_v4` profile; its configured reference digest
-is verified at startup and its transcript-free x-vector semantics cannot silently fall back to ICL.
+The PT-BR production default is `bernardo_pt_icl_v1` (ICL mode); the EN-US production default is
+`bernardo_en_xvec_v2` (x-vector mode). Reference digests are verified at startup. ICL profiles
+include reference transcripts; x-vector profiles do not.
 
 The Qwen prompt is cached by this identity and is not recomputed per narration. Registered profile
 prompts are pinned for the service lifetime. Benchmark-only ephemeral prompts use a bounded LRU
